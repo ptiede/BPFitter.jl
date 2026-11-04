@@ -1,0 +1,44 @@
+name = "BPFitter"
+uuid = "6383ed03-313b-4703-b43b-c850054786c6"
+version = "0.1.0"
+authors = ["Paul Tiede <ptiede91@gmail.com> and contributors"]
+
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+FITSFiles = "358a0a88-3548-4ad6-b652-8bdbf64af8e5"
+Gustavo = "b6f820fd-87a9-4cf8-8bd4-0e8dc9bb4263"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+XRadio = "8f21e5d1-474f-4c64-bef4-ed78edb0e816"
+
+[sources]
+FITSFiles = {rev = "ptiede-uvfixes", url = "https://github.com/ptiede/FITSFiles.jl"}
+Gustavo = {rev = "main", url = "https://github.com/ptiede/Gustavo.jl"}
+XRadio = {rev = "main", url = "https://github.com/JuliaAstro/XRadio.jl"}
+
+[compat]
+CairoMakie = "0.15"
+Dates = "1"
+DimensionalData = "0.30"
+Distributions = "0.25"
+FITSFiles = "0.4"
+Gustavo = "0.1"
+LinearAlgebra = "1"
+Printf = "1"
+Statistics = "1"
+TOML = "1"
+XRadio = "0.1"
+julia = "1.12"
+
+[apps.bpfit]
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

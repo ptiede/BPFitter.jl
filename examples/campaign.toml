@@ -1,0 +1,47 @@
+# A BPFitter campaign file. Paths are relative to this file and may contain
+# {track} and {label}. Every key of [defaults] may also be set per track, where
+# it replaces the default whole.
+
+[defaults]
+data = "data/hops/{track}"                    # the track's HOPS uvfits, one file per source
+antab = "data/antab/{label}.AN"               # leave out for tracks with no ANTAB file
+output = "bpfit/{track}"                      # solutions, tables, plots, break suggestions
+corrected = "data/bpcal/{track}"              # corrected uvfits; leave out to write none
+export_name = "hops_{track}_{source}_bpcal.uvfits"
+quantization_efficiency = 1.0
+scan_delays = true
+watch_stations = ["S1", "S2"]                 # stations whose baselines get before/after plots
+
+# Channels with no usable signal but sound-looking weights (`bpfit inspect`
+# lists candidates): per station and feed, or per station on every feed.
+feed_flags = { S1 = { 1 = [12] } }
+station_flags = { S2 = [1] }
+
+# A phase level and a delay per scan over these channel groups, beside the
+# station's bandpass, for a station whose phase slope restarts at fixed channel
+# blocks and changes from scan to scan.
+scan_terms = { S2 = [[1, 8], [9, 16], [17, 24], [25, 32]] }
+
+[breaks]                # settings of `bpfit breaks`, which suggests breaks for review
+min_F = 40.0            # refit F a suggested break must reach
+alpha = 1e-3            # false-alarm rate of the refit F test, also required
+peaks = 2               # candidates per station: its highest gap F local maxima
+tries = 4               # candidates refit per round, highest gap F first
+min_gap_minutes = 3.0
+
+# For tracks without ANTAB files: ngehtsim's array settings and its site name
+# for every station code in the data.
+[sefd]
+array = "ARRAY_NAME"
+weather = "exact"
+stations = { S1 = "SITE1", S2 = "SITE2", S3 = "SITE3" }
+
+[tracks.track1]
+label = "t1"
+ref_ant = "S3"                                # leave out to take the station on the most scans
+
+[tracks.track2]
+label = "t2"
+breaks = { S1 = [6.5] }                       # hours since UT midnight before the first sample
+apply_only_sources = ["SOURCE_X"]             # corrected and exported, but not in the solve
+scan_flags = [{ stations = ["S1", "S2"], scan = "SOURCE_Y_3" }]

@@ -1,0 +1,12 @@
+[project]
+name = "bpfitter-sefd"
+version = "0.1.0"
+description = "Simulated a-priori SEFDs for BPFitter, from ngehtsim"
+requires-python = ">=3.11"
+dependencies = [
+    "ngehtsim @ git+https://github.com/Smithsonian/ngehtsim@833035f4f1c72842190f7f19a58a5d8a055c12bd",
+    "numpy",
+]
+
+[tool.uv]
+package = false
