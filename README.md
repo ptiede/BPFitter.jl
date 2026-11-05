@@ -21,8 +21,7 @@ pkg> app add https://github.com/ptiede/BPFitter.jl
 ```
 
 Julia puts the app in `~/.julia/bin`, which must be on the `PATH`. Update it
-with `pkg> app update BPFitter`. You can also call it from a clone with
-`julia --project=path/to/BPFitter -m BPFitter <command> …`.
+with `pkg> app update BPFitter`.
 
 Tracks without an ANTAB file take simulated SEFDs from
 [ngehtsim](https://github.com/Smithsonian/ngehtsim) (its `refactor` branch),
