@@ -3,6 +3,7 @@ using BPFitter: scan_gaps, check_gap, overlapping_sources, add_break, drop_break
 using Gustavo
 using XRadio
 using DimensionalData
+using Random: Xoshiro
 using Test
 
 include(joinpath(pkgdir(Gustavo), "test", "synthetic_uvfits.jl"))
@@ -35,22 +36,73 @@ function write_track(dir; source = "SRC", vis = (r, p, c) -> complex(1.0, 0.0), 
     return dir
 end
 
-# `sefd`: station => one SEFD, or one per scan.
-function write_antab(path, sefd; nscans = 2)
+# `sefd`: station => one SEFD, or one per scan. One TSYS row per scan, at the
+# scan's start (scans ten minutes apart from midnight of day 99).
+function write_antab(path, sefd; nscans = 2, nif = 4)
     open(path, "w") do io
         for st in sort(collect(keys(sefd)))
             println(io, "GAIN $st ELEV DPFU = 1.0, 1.0 POLY = 1.0 /")
         end
+        index = join(("'L$i|R$i'" for i in 1:nif), ", ")
         for st in sort(collect(keys(sefd)))
-            println(io, "TSYS $st FT = 1.0 TIMEOFF = 0 INDEX = 'L1|R1', 'L2|R2', 'L3|R3', 'L4|R4' /")
+            println(io, "TSYS $st FT = 1.0 TIMEOFF = 0 INDEX = $index /")
             for k in 1:nscans
-                v = join(fill(string(sefd[st] isa Number ? sefd[st] : sefd[st][k]), 4), " ")
-                println(io, " 99 00:$(lpad(10 * (k - 1), 2, '0')).2 $v")
+                v = join(fill(string(sefd[st] isa Number ? sefd[st] : sefd[st][k]), nif), " ")
+                h, m = divrem(10 * (k - 1), 60)
+                println(io, " 99 $(lpad(h, 2, '0')):$(lpad(m, 2, '0')).2 $v")
             end
             println(io, "/")
         end
     end
     return path
+end
+
+# The bandpass of `STEP_STATIONS` across eight one-channel IFs: phase (rad) and
+# log-amplitude per channel, and the change of BB's after scan `STEP_AFTER`.
+const STEP_STATIONS = ["AA", "BB", "CC", "DD"]
+const STEP_AFTER = 6
+step_x(c) = (c - 4.5) / 3.5
+step_phase(a, c) = (0.0, 0.3 * step_x(c)^2 - 0.1, 0.15 * cos(2 * step_x(c)), 0.25 * sin(3 * step_x(c)))[a]
+step_logamp(a, c) = (0.05 * step_x(c)^2, -0.08 * step_x(c), 0.04 * cos(2 * step_x(c)), 0.0)[a]
+step_dphase(c) = 0.35 * cos(2.5 * step_x(c))
+step_dlogamp(c) = 0.1 * step_x(c)^2 - 0.03
+
+# Four stations near the north pole observing one source at +80°, twelve scans
+# of three integrations, with the bandpass above and noise of `σ` per
+# visibility component (weights 1/σ²). The source is 1 Jy with SEFDs of 1 Jy.
+function write_step_track(dir; σ = 0.05, nscans = 12)
+    rng = Xoshiro(7)
+    starts = T0 .+ 600.0 .* (0:(nscans - 1))
+    times = Float64[]
+    baselines = Tuple{Int, Int}[]
+    scan_of = Int[]
+    for (k, t0) in pairs(starts), t in t0 .+ (0, 10, 20), a in 1:4, b in (a + 1):4
+        push!(times, t)
+        push!(baselines, (a, b))
+        push!(scan_of, k)
+    end
+    gain(a, c, k) = exp(
+        complex(
+            step_logamp(a, c) + (a == 2 && k > STEP_AFTER ? step_dlogamp(c) : 0.0),
+            step_phase(a, c) + (a == 2 && k > STEP_AFTER ? step_dphase(c) : 0.0),
+        )
+    )
+    nrec = length(times)
+    vis = ComplexF32[
+        gain(baselines[r][1], c, scan_of[r]) * conj(gain(baselines[r][2], c, scan_of[r])) + σ * complex(randn(rng), randn(rng))
+            for r in 1:nrec, p in 1:2, c in 1:8
+    ]
+    write_synthetic_uvfits(
+        joinpath(dir, "hops_TEST_SRC.uvfits");
+        times, baselines, uvw = zeros(nrec, 3), vis,
+        weights = fill(Float32(1 / σ^2), nrec, 2, 8),
+        ref_freq = 228.0e9, if_freqs = 58.0e6 .* (0:7), ch_width = fill(58.0e6, 8),
+        antennas = STEP_STATIONS,
+        positions = [0.0 1.0e5 -1.0e5 0.0; 1.0e5 0.0 -1.0e5 -1.0e5; 6.356e6 6.356e6 6.356e6 6.356e6],
+        scans = [(t0 - 5, t0 + 25) for t0 in starts],
+        object = "SRC", ra = 187.7, dec = 80.0, rdate = "2024-04-08",
+    )
+    return dir
 end
 
 function write_campaign(dir, body)
@@ -186,6 +238,66 @@ end
         @test only(odd).sefd ≈ 2000.0
         @test only(odd).typical ≈ 102.5
         @test isempty(sefd_outliers(ps; factor = 25.0))
+    end
+
+    @testset "breaks, solve and apply on a synthetic track" begin
+        dir = mktempdir()
+        write_step_track(mkpath(joinpath(dir, "data", "T")))
+        write_antab(mkpath(joinpath(dir, "antab")) * "/T.AN", Dict(st => 1.0 for st in STEP_STATIONS); nscans = 12, nif = 8)
+        campaign_body(breaks) = """
+        [defaults]
+        data = "data/{track}"
+        antab = "antab/{track}.AN"
+        output = "out/{track}"
+        corrected = "out/corrected/{track}"
+        ref_ant = "AA"
+        [tracks.T]
+        $breaks
+        """
+        cfg = read_campaign(write_campaign(dir, campaign_body("")))["T"]
+        track = prepare_track(cfg)
+        gap = (track.rows[STEP_AFTER].t1, track.rows[STEP_AFTER + 1].t0)
+
+        r = find_breaks(track; io = devnull)
+        @test collect(keys(r.breaks)) == ["BB"]
+        h = only(r.breaks["BB"])
+        @test gap[1] < h < gap[2]
+        @test all(BPFitter.passed, r.final)
+
+        suggestions = write_suggestions(joinpath(cfg.output, "break_suggestions"), track, r)
+        table = read(joinpath(suggestions, "suggestions.txt"), String)
+        @test occursin("breaks = { BB = [$h] }", table)
+        @test isfile(joinpath(suggestions, "suggested_BB_$h.png"))
+
+        # The change across the break matches the injected one.
+        ν = track.ps |> values |> first |> XRadio.frequencies
+        ν = ν .- sum(ν) / length(ν)
+        truth = BPFitter._station_change(hcat(step_dphase.(1:8), step_dphase.(1:8)), hcat(step_dlogamp.(1:8), step_dlogamp.(1:8)), ν)
+        found = r.changes[("BB", h)]
+        @test found.shape ≈ truth.shape rtol = 0.1
+        @test found.scatter ≈ truth.scatter rtol = 0.15
+
+        # With the break the corrected spectra are flat to the noise; without it they are not.
+        χ²(s) = (q = BPFitter.scan_chi2(s.chi2); q.chi2 / q.dof)
+        @test 0.8 < χ²(solve_track(track; breaks = r.breaks)) < 1.25
+        @test χ²(solve_track(track; breaks = Dict{String, Vector{Float64}}())) > 3
+
+        # `run` solves with the campaign file's breaks, writes the reports and exports;
+        # `apply` writes the same files from the saved solution.
+        campaign = read_campaign(write_campaign(dir, campaign_body("breaks = { BB = [$h] }")))
+        redirect_stdout(devnull) do
+            BPFitter.run_command("run", campaign, ["T"])
+        end
+        for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "bandpass.zarr", "scan_delays.zarr")
+            @test ispath(joinpath(cfg.output, f))
+        end
+        exported = joinpath(cfg.corrected, "hops_T_SRC_bpcal.uvfits")
+        @test 0.8 < BPFitter.scan_chi2(BPFitter.track_tss(load_uvfits(exported))) |> (q -> q.chi2 / q.dof) < 1.25
+        rm(exported)
+        redirect_stdout(devnull) do
+            BPFitter.run_command("apply", campaign, ["T"])
+        end
+        @test 0.8 < BPFitter.scan_chi2(BPFitter.track_tss(load_uvfits(exported))) |> (q -> q.chi2 / q.dof) < 1.25
     end
 
     @testset "dead channels" begin

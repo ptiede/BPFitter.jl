@@ -227,6 +227,7 @@ function find_breaks(track::Track; search::BreakSearch = BreakSearch(), io::IO =
         breaks = drop_break(breaks, weakest.station, weakest.hour)
         current = _fresh_solve(track, breaks)
     end
+    return
 end
 
 # A search solve with its own per-scan delays, its delayed copy freed before the
@@ -288,13 +289,17 @@ function write_suggestions(dir, track::Track, r::BreakSearchResult)
         println(io, "the rms phase change beyond its delay and band mean, scatter the rms amplitude")
         println(io, "change about its band mean. A large F with a small change is a small step that")
         println(io, "high signal-to-noise makes significant.\n")
-        @printf(io, "%-10s %-4s %7s %8s %9s %7s  %-13s  %-13s  %-15s  %s\n", "status", "stn", "hour", "gap F", "F", "needs",
-            "shape (deg)", "scatter (%)", "delay (ns)", "sources 1 h before | after")
+        @printf(
+            io, "%-10s %-4s %7s %8s %9s %7s  %-13s  %-13s  %-15s  %s\n", "status", "stn", "hour", "gap F", "F", "needs",
+            "shape (deg)", "scatter (%)", "delay (ns)", "sources 1 h before | after"
+        )
         for t in rows
             c = r.changes[(t.station, t.hour)]
-            @printf(io, "%-10s %-4s %7.2f %8.2f %9.2f %7.2f  %-13s  %-13s  %-15s  %s\n", status(t), t.station, t.hour, t.gap_F, t.F, t.threshold,
+            @printf(
+                io, "%-10s %-4s %7.2f %8.2f %9.2f %7.2f  %-13s  %-13s  %-15s  %s\n", status(t), t.station, t.hour, t.gap_F, t.F, t.threshold,
                 join([@sprintf("%.2f", rad2deg(x)) for x in c.shape], " "), join([@sprintf("%.2f", 100x) for x in c.scatter], " "),
-                join([@sprintf("%.3f", 1.0e9x) for x in c.delay], " "), _nearby_sources(track.rows, t.station, t.hour))
+                join([@sprintf("%.3f", 1.0e9x) for x in c.delay], " "), _nearby_sources(track.rows, t.station, t.hour)
+            )
             save(joinpath(dir, "$(status(t))_$(t.station)_$(t.hour).png"), plot_break_change(c, ν, t, status(t), _nearby_sources(track.rows, t.station, t.hour)))
         end
         println(io, "\nTo adopt the suggestions, set in [tracks.$(track.cfg.name)]:")
