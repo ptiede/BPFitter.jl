@@ -22,11 +22,12 @@ station_flags = { S2 = [1] }
 # blocks and changes from scan to scan.
 scan_terms = { S2 = [[1, 8], [9, 16], [17, 24], [25, 32]] }
 
-[breaks]                # settings of `bpfit breaks`, which suggests breaks for review
-min_F = 40.0            # refit F a suggested break must reach
-alpha = 1e-3            # false-alarm rate of the refit F test, also required
-peaks = 2               # candidates per station: its highest gap F local maxima
-tries = 4               # candidates refit per round, highest gap F first
+[breaks]                    # settings of `bpfit breaks`, which suggests breaks for review
+min_shape_deg = 2.0         # a change must reach this phase shape (degrees)
+min_scatter_percent = 5.0   # or this amplitude scatter (percent) to be refit and kept
+min_F = 40.0                # refit F a suggested break must reach
+alpha = 1e-3                # false-alarm rate of the refit F test, also required
+tries = 4                   # candidates refit per round, highest gap F first
 min_gap_minutes = 3.0
 
 # For tracks without ANTAB files: ngehtsim's array settings and its site name

@@ -145,12 +145,11 @@ end
 """
     BreakChange
 
-How one station's bandpass moves across a break, with the across-station median
-removed channel by channel (the gauge difference between two independently
-solved segments, not a change): per channel and feed the phase change `dp`
-(rad) and log-amplitude change `da`; per feed the `delay` (s) the phase change
-carries, its `shape` (rad), the rms of the phase change beyond that delay and
-its band mean, and `scatter`, the rms of `da` about its band mean.
+How one station's bandpass moves across a break: per channel and feed the phase
+change `dp` (rad) and log-amplitude change `da`; per feed the `delay` (s) the
+phase change carries, its `shape` (rad), the rms of the phase change beyond that
+delay and its band mean, and `scatter`, the rms of `da` about its band mean.
+Channels with `NaN` changes are left out of the per-feed values.
 """
 struct BreakChange{T}
     dp::Matrix{T}
@@ -165,7 +164,9 @@ end
 
 Every station's [`BreakChange`](@ref) across `hour` (hours since `origin`) in
 the bandpass shape of `sol`, from its last sample before `hour` to its first
-after.
+after, with the across-station median removed channel by channel: that median
+is the gauge difference between two independently solved segments, not a
+change.
 """
 function break_changes(sol, hour, origin)
     shape = shape_only(sol)
@@ -182,13 +183,17 @@ function break_changes(sol, hour, origin)
 end
 
 function _station_change(dp, da, ν)
-    stats = map(axes(dp, 2)) do f
-        z = cis.(view(dp, :, f))
-        τ = best_delay(z, ones(length(z)), ν)
-        beyond = z .* cis.(-2π * τ .* ν)
-        (; τ, shape = rms(angle.(beyond .* conj(sum(beyond)))), scatter = std(view(da, :, f)))
-    end
+    stats = map(f -> _feed_change(view(dp, :, f), view(da, :, f), ν), axes(dp, 2))
     return BreakChange(collect(dp), collect(da), [x.τ for x in stats], [x.shape for x in stats], [x.scatter for x in stats])
+end
+
+function _feed_change(dp, da, ν)
+    ok = [c for c in eachindex(dp, da, ν) if isfinite(dp[c]) && isfinite(da[c])]
+    length(ok) < 2 && return (; τ = NaN, shape = NaN, scatter = NaN)
+    z = cis.(dp[ok])
+    τ = best_delay(z, ones(length(ok)), ν[ok])
+    beyond = z .* cis.(-2π * τ .* ν[ok])
+    return (; τ, shape = rms(angle.(beyond .* conj(sum(beyond)))), scatter = std(da[ok]))
 end
 
 """

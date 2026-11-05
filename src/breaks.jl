@@ -3,10 +3,12 @@
 
 A break tested by solving the track with and without it: the station, the hour,
 the χ² rise `dchi2` from leaving it out, the parameters it carries `dp`, the
-ratio `F = (dchi2/dp)/(χ²/ν)` against the solve with the break, and the
-`threshold` F had to pass. `gap_F` is the gap F ratio that proposed it
-(`NaN` for a break that was not proposed by the search). The threshold is the
-larger of `search.min_F` and the `1 - search.alpha` quantile of F(dp, ν).
+ratio `F = (dchi2/dp)/(χ²/ν)` against the solve with the break, the
+`threshold` F had to pass, and whether the change across it in the solve with
+the break reaches a size of the search (`large`). `gap_F` is the gap F ratio
+that proposed it (`NaN` for a break that was not proposed by the search). The
+threshold is the larger of `search.min_F` and the `1 - search.alpha` quantile
+of F(dp, ν). A break passes when F exceeds the threshold and it is large.
 """
 struct BreakTest{T}
     station::String
@@ -16,35 +18,41 @@ struct BreakTest{T}
     dp::Int
     F::T
     threshold::T
+    large::Bool
 end
-passed(t::BreakTest) = t.F > t.threshold
+passed_F(t::BreakTest) = t.F > t.threshold
+passed(t::BreakTest) = passed_F(t) && t.large
 
 """
-    break_test(with, without, station, hour, search::BreakSearch; gap_F = NaN) -> BreakTest
+    break_test(with, without, station, hour, search::BreakSearch; gap_F = NaN, large) -> BreakTest
 
 The F test of a break between a solve that has it (`with`) and one that does
-not. The misfit the model with the break leaves scales the χ² rise.
+not. The misfit the model with the break leaves scales the χ² rise. `large`
+says whether the change across the break in `with` reaches
+`search.min_shape_deg` or `search.min_scatter_percent`.
 """
-function break_test(with::TrackSolve, without::TrackSolve, station, hour, search::BreakSearch; gap_F = NaN)
+function break_test(with::TrackSolve, without::TrackSolve, station, hour, search::BreakSearch; gap_F = NaN, large)
     χa, ν = scan_chi2(with.chi2)
     χb = scan_chi2(without.chi2).chi2
     dp = nparams(with) - nparams(without)
     F = ((χb - χa) / dp) / (χa / ν)
     threshold = max(search.min_F, quantile(FDist(dp, ν), 1 - search.alpha))
-    return BreakTest(String(station), promote(Float64(hour), gap_F, χb - χa)..., dp, F, threshold)
+    return BreakTest(String(station), promote(Float64(hour), gap_F, χb - χa)..., dp, F, threshold, large)
 end
 
 """
     BreakCandidate
 
 A place a station's bandpass may step: the station, the hour (inside a gap no
-scan of the track straddles), and the gap F ratio of the station's baselines
-split there.
+scan of the track straddles), the gap F ratio of the station's baselines split
+there, and the change across it measured on the residuals
+([`BreakChange`](@ref)), channel by channel the median over the baselines.
 """
 struct BreakCandidate{T}
     station::String
     hour::T
     gap_F::T
+    change::BreakChange{T}
 end
 
 """
@@ -52,18 +60,24 @@ end
 
 The places each station's bandpass may step in the corrected data of `s`, a
 [`search_solve`](@ref) whose corrected data are scan averages, highest gap F
-first: the station's `search.peaks` highest local maxima of the
-gap F ratio (`Gustavo.Fring.step_tests` on the scan averages' normalized
-residuals) over its gaps of at least `search.min_gap_minutes`, leaving out the
-gaps that hold one of its breaks already. A step raises the gap F at the gaps
-around it too, so it is the local maxima that mark where steps may be. Each
-candidate is placed at the middle of the longest stretch of its gap that no
-scan of the track straddles; a gap that every instant of which some scan covers
-yields no candidate.
+first: the local maxima of the gap F ratio (`Gustavo.Fring.step_tests` on the
+scan averages' normalized residuals) over the station's gaps of at least
+`search.min_gap_minutes`, leaving out the gaps that hold one of its breaks
+already, where the change across the gap reaches `search.min_shape_deg` or
+`search.min_scatter_percent`. A step raises the gap F at the gaps around it
+too, so it is the local maxima that mark where steps may be. The change is
+the median over the station's baselines, so a step that shows on one baseline
+only, as another station's step does, stays small. Each candidate is placed at
+the middle of the longest stretch of its gap that no scan of the track
+straddles; a gap that every instant of which some scan covers yields no
+candidate.
 """
 function break_candidates(track::Track, s::TrackSolve, search::BreakSearch)
     residuals = normalized_residuals(s.corrected)
+    scan_names = parent(residuals.scan_name)
     intervals = scan_intervals(filter(in_solve(track.cfg), track.ps))
+    ν = collect(lookup(residuals.r, Frequency))
+    ν = ν .- mean(ν)
     free = scan_gaps(track.rows)
     out = BreakCandidate{Float64}[]
     for st in Gustavo.Calibration.DataGeometry(s.corrected).antennas
@@ -71,16 +85,87 @@ function break_candidates(track::Track, s::TrackSolve, search::BreakSearch)
         span(r) = (track_hours(r.time - r.gap / 2, track.origin), track_hours(r.time + r.gap / 2, track.origin))
         local_max(i) = (i == firstindex(rows) || rows[i - 1].F <= rows[i].F) && (i == lastindex(rows) || rows[i + 1].F <= rows[i].F)
         holds_break(r) = ((lo, hi) = span(r); any(h -> lo <= h <= hi, get(s.breaks, st, Float64[])))
-        peaks = [rows[i] for i in eachindex(rows) if local_max(i) && !holds_break(rows[i])]
-        for r in first(sort!(peaks; by = r -> -r.F), search.peaks)
+        series = _station_series(residuals, st)
+        for r in (rows[i] for i in eachindex(rows) if local_max(i) && !holds_break(rows[i]))
+            change = _step_change(series, scan_names, intervals, r.time, ν)
+            _large(change, search) || continue
             lo, hi = span(r)
             stretches = [(max(g.t0, lo), min(g.t1, hi)) for g in free if g.t1 > lo && g.t0 < hi]
             isempty(stretches) && continue
             a, b = stretches[argmax([b - a for (a, b) in stretches])]
-            push!(out, BreakCandidate(st, _round_inside((a + b) / 2, a, b), r.F))
+            push!(out, BreakCandidate(String(st), _round_inside((a + b) / 2, a, b), r.F, change))
         end
     end
     return sort!(out; by = c -> -c.gap_F)
+end
+
+_large(c::BreakChange, search) = any(>=(deg2rad(search.min_shape_deg)), c.shape) || any(>=(search.min_scatter_percent / 100), c.scatter)
+
+# The residual spectra (channel × scan) and variances on each baseline to
+# `station` and parallel feed pair, with the feed and the sign that turns the
+# baseline's phase change into the station's.
+function _station_series(residuals, station)
+    r, var = residuals.r, residuals.var
+    antenna_pairs, feeds = lookup(r, AntennaPair), lookup(r, FeedPair)
+    cells = [
+        (j, q) for j in axes(r, AntennaPair), q in axes(r, FeedPair)
+            if station in antenna_pairs[j] && feeds[q][1] == feeds[q][2]
+    ]
+    series = map(cells) do (j, q)
+        R = parent(permutedims(r[AntennaPair(j), FeedPair(q)], (Frequency, Ti)))
+        V = parent(permutedims(var[AntennaPair(j), FeedPair(q)], (Frequency, Ti)))
+        scans = [s for s in axes(V, 2) if any(isfinite, view(V, :, s))]
+        (; feed = feeds[q][1], sign = first(antenna_pairs[j]) == station ? 1 : -1, R, V, scans)
+    end
+    return filter!(x -> !isempty(x.scans), series)
+end
+
+# The change of a station's bandpass across the time `T` (s) in its `series`:
+# on each baseline and feed the ratio of the weighted mean spectra of the scans
+# after and before, then channel by channel the median over the baselines.
+function _step_change(series, scan_names, intervals, T, ν)
+    dp = [Float64[] for _ in eachindex(ν), _ in 1:maximum(x -> x.feed, series)]
+    da = [Float64[] for _ in eachindex(ν), _ in 1:maximum(x -> x.feed, series)]
+    for x in series
+        μb, μa = _split_means(x.R, x.V, x.scans, s -> first(intervals[scan_names[s]]) < T)
+        for c in eachindex(ν)
+            r = μa[c] / μb[c]
+            isfinite(r) || continue
+            push!(dp[c, x.feed], x.sign * angle(r))
+            push!(da[c, x.feed], log(abs(r)))
+        end
+    end
+    middle(v) = isempty(v) ? NaN : median(v)
+    return _station_change(middle.(dp), middle.(da), ν)
+end
+
+# The weighted mean of each channel of `R` (channel × scan, variances `V`) over
+# the `scans` before the split and over those after; NaN for a channel with
+# fewer than two scans on a side.
+function _split_means(R, V, scans, before)
+    μb = fill!(similar(R, axes(R, 1)), complex(NaN, NaN))
+    μa = copy(μb)
+    for c in axes(R, 1)
+        Wb = Wa = 0.0
+        Sb = Sa = zero(eltype(R))
+        nb = na = 0
+        for s in scans
+            isfinite(V[c, s]) || continue
+            w = inv(V[c, s])
+            if before(s)
+                Wb += w
+                Sb += w * R[c, s]
+                nb += 1
+            else
+                Wa += w
+                Sa += w * R[c, s]
+                na += 1
+            end
+        end
+        (nb >= 2 && na >= 2) || continue
+        μb[c], μa[c] = Sb / Wb, Sa / Wa
+    end
+    return μb, μa
 end
 
 # The hour to two decimals when that stays inside (a, b), as a person would write it.
@@ -162,17 +247,18 @@ forward selection starting from the track's configured breaks:
 
 1. solve with the current breaks and list each station's candidate steps
    ([`break_candidates`](@ref));
-2. refit with each of the best `search.tries` candidates added, keeping the
-   solve's per-scan delays, and keep the one with the largest F among those
-   whose [`break_test`](@ref) passes; a step seen on two stations through the
-   baseline between them goes to the station that explains more of it;
+2. refit with each of the best `search.tries` candidates added and keep the one
+   with the largest F among those whose [`break_test`](@ref) passes, with a
+   change in the refit that reaches a size of `search`; a step seen on two
+   stations through the baseline between them goes to the station that explains
+   more of it;
 3. repeat until no candidate passes.
 
 Then every break is tested again against the solve with all of them, and the
-weakest one that fails is dropped and the track re-solved, until all pass. The
-solves of step 1 and of the final tests fit their own per-scan delays; the
-refits of step 2 reuse the delays and the delay-corrected data of their round
-([`search_data`](@ref), [`search_solve`](@ref)). Progress goes to `io`.
+weakest one that fails is dropped and the track re-solved, until all pass; a
+configured break is held to the F test alone. Every solve uses the per-scan
+delays of a solve with the configured breaks ([`search_data`](@ref),
+[`search_solve`](@ref)). Progress goes to `io`.
 """
 function find_breaks(track::Track; search::BreakSearch = BreakSearch(), io::IO = stdout)
     breaks = Dict(k => copy(v) for (k, v) in track.cfg.breaks)
@@ -185,57 +271,52 @@ function find_breaks(track::Track; search::BreakSearch = BreakSearch(), io::IO =
     while true
         println(io, "round with breaks ", _show_breaks(breaks), ": ", length(candidates), " candidates")
         for c in candidates
-            @printf(io, "  %-4s %7.2f h  gap F %8.2f\n", c.station, c.hour, c.gap_F)
+            @printf(
+                io, "  %-4s %7.2f h  gap F %8.2f  shape %s deg\n", c.station, c.hour, c.gap_F,
+                join([@sprintf("%.2f", rad2deg(x)) for x in c.change.shape], " ")
+            )
         end
         flush(io)
         best = nothing
         for c in first(candidates, search.tries)
             trial = search_solve(track, add_break(breaks, c.station, c.hour), data)
-            t = break_test(trial, current, c.station, c.hour, search; gap_F = c.gap_F)
+            change = break_changes(trial.sol, c.hour, track.origin)[c.station]
+            t = break_test(trial, current, c.station, c.hour, search; gap_F = c.gap_F, large = _large(change, search))
             push!(tried, t)
-            changes[(c.station, c.hour)] = break_changes(trial.sol, c.hour, track.origin)[c.station]
+            changes[(c.station, c.hour)] = change
             _print_test(io, t)
             passed(t) && (isnothing(best) || t.F > best.F) && (best = t)
         end
         isnothing(best) && break
         breaks = add_break(breaks, best.station, best.hour)
-        data = nothing
-        GC.gc()
-        data = search_data(track, breaks)
         current = search_solve(track, breaks, data)
         candidates = break_candidates(track, current, search)
     end
-    data = nothing
-    GC.gc()
+    configured(st, h) = h in get(track.cfg.breaks, st, Float64[])
     while true
         final = BreakTest{Float64}[]
         for (st, hrs) in breaks, h in hrs
-            without = _fresh_solve(track, drop_break(breaks, st, h))
+            without = search_solve(track, drop_break(breaks, st, h), data)
             proposed = findfirst(t -> (t.station, t.hour) == (st, h), tried)
-            push!(final, break_test(current, without, st, h, search; gap_F = isnothing(proposed) ? NaN : tried[proposed].gap_F))
+            change = changes[(st, h)] = break_changes(current.sol, h, track.origin)[st]
+            push!(
+                final, break_test(
+                    current, without, st, h, search;
+                    gap_F = isnothing(proposed) ? NaN : tried[proposed].gap_F, large = configured(st, h) || _large(change, search),
+                )
+            )
         end
         println(io, "final tests")
         foreach(t -> _print_test(io, t), final)
-        for t in final
-            changes[(t.station, t.hour)] = break_changes(current.sol, t.hour, track.origin)[t.station]
-        end
         failing = filter(!passed, final)
         isempty(failing) && return BreakSearchResult(breaks, final, tried, dropped, current, changes)
         weakest = failing[argmin([t.F / t.threshold for t in failing])]
         push!(dropped, weakest)
         println(io, "dropping ", weakest.station, " at ", weakest.hour, " h")
         breaks = drop_break(breaks, weakest.station, weakest.hour)
-        current = _fresh_solve(track, breaks)
+        current = search_solve(track, breaks, data)
     end
     return
-end
-
-# A search solve with its own per-scan delays, its delayed copy freed before the
-# next is made.
-function _fresh_solve(track, breaks)
-    s = search_solve(track, breaks, search_data(track, breaks))
-    GC.gc()
-    return s
 end
 
 _show_breaks(b) = isempty(b) ? "none" : join(("$st $(join(h, ", "))" for (st, h) in sort(collect(b))), "; ")
@@ -243,7 +324,7 @@ _show_breaks(b) = isempty(b) ? "none" : join(("$st $(join(h, ", "))" for (st, h)
 function _print_test(io, t::BreakTest)
     @printf(
         io, "  %-4s %7.2f h  Δχ² %10.1f  Δp %4d  F %9.2f  (needs %.2f)  %s\n",
-        t.station, t.hour, t.dchi2, t.dp, t.F, t.threshold, passed(t) ? "kept" : "rejected"
+        t.station, t.hour, t.dchi2, t.dp, t.F, t.threshold, passed(t) ? "kept" : passed_F(t) ? "small" : "rejected"
     )
     return flush(io)
 end
@@ -256,7 +337,8 @@ whole):
 
 - `suggestions.txt`: one row per break or candidate, with its status
   (`configured`, `suggested`, `dropped` in the final tests, `passed`: it passed
-  its test but another candidate of the same round was kept, or `rejected`), its
+  its test but another candidate of the same round was kept, `small`: it passed
+  the F test but its change reaches neither size, or `rejected`), its
   gap and refit F, the size of the change across it per feed (phase shape,
   amplitude scatter, delay; see [`BreakChange`](@ref)), and the sources the
   station observed in the hour before and after; then the `breaks` entry that
@@ -273,9 +355,9 @@ function write_suggestions(dir, track::Track, r::BreakSearchResult)
     status(t) = t.hour in get(configured, t.station, Float64[]) ? "configured" :
         any(d -> (d.station, d.hour) == (t.station, t.hour), r.dropped) ? "dropped" :
         any(f -> (f.station, f.hour) == (t.station, t.hour), r.final) ? "suggested" :
-        passed(t) ? "passed" : "rejected"
+        passed(t) ? "passed" : passed_F(t) ? "small" : "rejected"
     latest = Dict((t.station, t.hour) => t for t in vcat(r.tried, r.dropped, r.final))
-    order = Dict("configured" => 1, "suggested" => 2, "dropped" => 3, "passed" => 4, "rejected" => 5)
+    order = Dict("configured" => 1, "suggested" => 2, "dropped" => 3, "passed" => 4, "small" => 5, "rejected" => 6)
     rows = sort!(collect(values(latest)); by = t -> (order[status(t)], order[status(t)] > 3 ? -t.F : t.hour))
     ν = r.solve.sol.geom.channel_freqs ./ 1.0e9
     open(joinpath(dir, "suggestions.txt"), "w") do io
@@ -284,11 +366,12 @@ function write_suggestions(dir, track::Track, r::BreakSearchResult)
         println(io, "(against the solve with all suggested breaks for configured, suggested and dropped")
         println(io, "rows; against the solve without it during the search for the others). `passed`")
         println(io, "rows passed their test, but another candidate of the same round explained more,")
-        println(io, "often the other station of a baseline that shows the step. The change")
+        println(io, "often the other station of a baseline that shows the step. `small` rows passed")
+        println(io, "the F test with a change below min_shape_deg and min_scatter_percent. The change")
         println(io, "across each break is per feed, with the across-station median removed: shape is")
         println(io, "the rms phase change beyond its delay and band mean, scatter the rms amplitude")
-        println(io, "change about its band mean. A large F with a small change is a small step that")
-        println(io, "high signal-to-noise makes significant.\n")
+        println(io, "change about its band mean. Only candidates whose change on the residuals reaches")
+        println(io, "one of those sizes are refit.\n")
         @printf(
             io, "%-10s %-4s %7s %8s %9s %7s  %-13s  %-13s  %-15s  %s\n", "status", "stn", "hour", "gap F", "F", "needs",
             "shape (deg)", "scatter (%)", "delay (ns)", "sources 1 h before | after"

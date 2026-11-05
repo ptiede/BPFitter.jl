@@ -65,22 +65,30 @@ Each command runs on the named tracks, or on all of them.
 
 1. solves the track and, for each station, splits every baseline to it at each
    gap between its scans. The F ratio of a two-sided fit against one mean
-   spectrum peaks at a step; each station's `peaks` highest local maxima are
-   its candidates, ranked by that F;
-2. refits the track with each of the best `tries` candidates added, reusing the
-   solve's per-scan delays, and keeps the one with the largest
-   F = (Δχ²/Δp)/(χ²/ν) if it reaches `min_F` (and the 1 − α quantile of
-   F(Δp, ν)). The residuals carry structure from scan to scan, so
-   almost any cut passes the quantile alone; `min_F` sets a higher floor;
+   spectrum peaks at a step, and the ratio of the two means is the change
+   across it. Each station's local maxima of that F whose change, the median
+   over its baselines, reaches `min_shape_deg` in phase or
+   `min_scatter_percent` in amplitude are its candidates, ranked by that F.
+   A step of another station shows on one baseline only, so its median change
+   stays small;
+2. refits the track with each of the best `tries` candidates added and keeps
+   the one with the largest F = (Δχ²/Δp)/(χ²/ν) if it reaches `min_F` (and the
+   1 − α quantile of F(Δp, ν)) and its change in the refit reaches one of the
+   sizes. The residuals carry structure from scan to scan, so almost any cut
+   passes the quantile alone; `min_F` sets a higher floor. At high
+   signal-to-noise a change of a degree passes it too; the sizes keep the
+   search to large changes;
 3. repeats until no candidate passes, then retests every break against the
    solve with all of them and drops any that no longer pass.
+
+Every solve of the search uses the per-scan delays of one solve with the
+configured breaks.
 
 It writes `<output>/break_suggestions/`: `suggestions.txt`, one row per break
 or candidate with its F test, the size of the bandpass change across it per
 feed and the sources observed around it, and one plot per row of the phase and
-amplitude change against frequency. At high signal-to-noise a change of a
-degree passes the F test, so judge each by the size of its change and whether
-it lines up with a change of sources. To adopt breaks, add them to the track's
+amplitude change against frequency. Judge each by the size of its change and
+whether it lines up with a change of sources. To adopt breaks, add them to the track's
 `breaks` in the campaign file; the table ends with the entry that adopts all
 the suggestions.
 
@@ -144,7 +152,8 @@ and 6 for every track.
   during the search, then removed when retested against the solve with all the
   others), `passed` (it passed its test, but another candidate of the same
   round explained more, often the other station of a baseline that shows the
-  step) or `rejected`;
+  step), `small` (it passed the F test, but its change in the refit reaches
+  neither size) or `rejected`;
 - `gap F`: the step test that proposed it, and `F` and `needs`: the refit F test
   and the value it had to reach;
 - per feed, the size of the change across it: `shape`, the rms phase change
@@ -156,11 +165,10 @@ and 6 for every track.
 Each row has a plot of the phase and amplitude change against frequency. Things
 to weigh:
 
-- **Size.** On a station with very high signal-to-noise, a change of a degree
-  or a percent passes the F test easily. A real bandpass change usually has a
-  shape you can see in the plot: a slope, a curve, or a jump at the edge of a
-  block of channels. Channel-to-channel scatter of a degree or two with no
-  shape is close to the noise of the solution.
+- **Size.** A real bandpass change usually has a shape you can see in the
+  plot: a slope, a curve, or a jump at the edge of a block of channels.
+  Channel-to-channel scatter of a degree or two with no shape is close to the
+  noise of the solution.
 - **Sources.** A change that comes with a change of the sources observed can
   come from the sources rather than the instrument, for example from source
   structure on long baselines or from noisy delays on weak scans.
@@ -175,9 +183,8 @@ The table ends with a `breaks = { … }` line that adopts every suggestion; copy
 the parts you accept into the track's table. The search does not change the
 campaign file or the solve.
 
-Each round of the search fits the per-scan delays once and refits every
-candidate on the same delay-corrected data, so it takes from a few minutes to
-about twenty minutes per track.
+The search fits the per-scan delays once and refits only the candidates with
+large changes, so it takes a few minutes per track.
 
 ## Memory
 
@@ -216,11 +223,13 @@ Track keys:
 | `priors` | `{ bandwidth, phase_sigma, logamp_sigma }`: the centers of the hyperpriors on the bandpass's correlation bandwidth along frequency (Hz) and on the size of its phase (rad) and log-amplitude variations |
 | `watch_stations` | stations whose baselines get before/after plots |
 
-`[breaks]`, the settings of `bpfit breaks`: `min_F` (40) and `alpha` (10⁻³),
-the refit F a suggestion must reach and the false-alarm rate it must also
-pass; `peaks` (2), the candidates each station proposes per round; `tries` (4),
-the candidates refit per round; `min_gap_minutes` (3), the shortest gap between
-a station's scans a break may go in.
+`[breaks]`, the settings of `bpfit breaks`: `min_shape_deg` (2) and
+`min_scatter_percent` (5), the sizes of the change of which a candidate must
+reach one to be refit and a suggestion one to be kept; `min_F` (40) and
+`alpha` (10⁻³), the refit F a suggestion must reach and the false-alarm rate it
+must also pass; `tries` (4), the candidates refit per round;
+`min_gap_minutes` (3), the shortest gap between a station's scans a break may
+go in.
 
 `[sefd]`, for tracks without ANTAB files: `array`, ngehtsim's array settings;
 `stations`, ngehtsim's site name for every station code in the data (there is no

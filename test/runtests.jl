@@ -150,7 +150,7 @@ end
         @test b.scan_flags == [(["ST", "SP"], "X_1")]
         @test b.apply_only_sources == ["VARIABLE"]
         @test c.search.alpha == 1.0e-4
-        @test c.search.min_F == 40.0 && c.search.peaks == 2 && c.search.tries == 4
+        @test c.search.min_F == 40.0 && c.search.min_shape_deg == 2.0 && c.search.min_scatter_percent == 5.0 && c.search.tries == 4
         @test c.sefd.stations == Dict("AA" => "ALMA")
         @test c.sefd.array == "ARRAY"
         @test_throws "no track \"C\"" c["C"]
@@ -263,6 +263,8 @@ end
         h = only(r.breaks["BB"])
         @test gap[1] < h < gap[2]
         @test all(BPFitter.passed, r.final)
+        # A change below both sizes is neither refit nor suggested.
+        @test isempty(find_breaks(track; search = BreakSearch(; min_shape_deg = 90, min_scatter_percent = 90), io = devnull).breaks)
 
         suggestions = write_suggestions(joinpath(cfg.output, "break_suggestions"), track, r)
         table = read(joinpath(suggestions, "suggestions.txt"), String)

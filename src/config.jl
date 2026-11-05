@@ -1,21 +1,23 @@
 """
-    BreakSearch(; min_F = 40, alpha = 1e-3, peaks = 2, min_gap_minutes = 3, tries = 4)
+    BreakSearch(; min_F = 40, alpha = 1e-3, min_shape_deg = 2, min_scatter_percent = 5, min_gap_minutes = 3, tries = 4)
 
 Settings of the automatic break search ([`find_breaks`](@ref)), which looks
 for large steps in a station's bandpass and leaves slow changes to the per-scan
 terms.
 
+- `min_shape_deg`, `min_scatter_percent`: the size a change must reach on one
+  feed, as the rms phase change beyond its delay and band mean in degrees or
+  the rms amplitude change about its band mean in percent
+  ([`BreakChange`](@ref)). A candidate is refit only if its change measured on
+  the residuals (the median over the station's baselines) reaches it, and kept
+  only if its change in the refit does too. At high signal-to-noise a change of
+  a degree passes the F test; this keeps the search to large changes.
 - `min_F`: the refit F a break must reach. The F test treats what a solve
   leaves as noise, but the residuals carry structure from scan to scan, so
   nearly any cut passes its `1 - alpha` quantile, however small `alpha` is
   (with 128 parameters the quantile stays below about 2); this sets a higher
-  floor. A break must pass both. At high signal-to-noise a small change passes
-  it too, so the size of each change is reported for review.
+  floor. A break must pass both.
 - `alpha`: the false-alarm rate of the refit F test.
-- `peaks`: the candidates each station proposes per round, its highest local
-  maxima of the gap F ratio ([`Gustavo.Fring.step_tests`](@ref)) along the
-  track. Scan-to-scan scatter keeps the gap F of a real step low on some
-  stations, so its value ranks candidates but does not decide them.
 - `min_gap_minutes`: the shortest gap between a station's scans a break may be
   placed in.
 - `tries`: the candidates refit per round, highest gap F first; the one with
@@ -24,12 +26,13 @@ terms.
 struct BreakSearch{T}
     min_F::T
     alpha::T
+    min_shape_deg::T
+    min_scatter_percent::T
     min_gap_minutes::T
-    peaks::Int
     tries::Int
 end
-function BreakSearch(; min_F = 40.0, alpha = 1.0e-3, peaks = 2, min_gap_minutes = 3.0, tries = 4)
-    return BreakSearch(promote(min_F, alpha, min_gap_minutes)..., peaks, tries)
+function BreakSearch(; min_F = 40.0, alpha = 1.0e-3, min_shape_deg = 2.0, min_scatter_percent = 5.0, min_gap_minutes = 3.0, tries = 4)
+    return BreakSearch(promote(min_F, alpha, min_shape_deg, min_scatter_percent, min_gap_minutes)..., tries)
 end
 
 """
@@ -189,7 +192,7 @@ function read_campaign(path)
         t = _check_keys(tbl["tracks"][name], TRACK_KEYS, "[tracks.$name] of $path")
         tracks[name] = _track_config(name, merge(defaults, t), root)
     end
-    search = BreakSearch(; _symbol_keys(_check_keys(get(tbl, "breaks", Dict{String, Any}()), ("min_F", "alpha", "peaks", "min_gap_minutes", "tries"), "[breaks] of $path"))...)
+    search = BreakSearch(; _symbol_keys(_check_keys(get(tbl, "breaks", Dict{String, Any}()), ("min_F", "alpha", "min_shape_deg", "min_scatter_percent", "min_gap_minutes", "tries"), "[breaks] of $path"))...)
     sefd = haskey(tbl, "sefd") ? SimulatedSEFD(; _symbol_keys(_check_keys(tbl["sefd"], ("array", "stations", "weather"), "[sefd] of $path"))...) : nothing
     return Campaign(abspath(path), tracks, order, search, sefd)
 end
