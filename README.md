@@ -1,6 +1,6 @@
 # BPFitter.jl
 
-!! Note this README was written with the aid of Claude. If there is an issue please file it on GitHub.
+**Note this README was written with the aid of Claude. If there is an issue please file it on GitHub.**
 
 Joint bandpass calibration of HOPS-fringed VLBI tracks, built on
 [Gustavo](https://github.com/ptiede/Gustavo.jl).
