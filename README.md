@@ -118,7 +118,31 @@ A new campaign usually goes through these steps, one track at a time.
 4. **Solve without breaks.** `bpfit solve campaign.toml <track>`, then read
    `chi2.txt` and the plots (see [Outputs](#outputs)). A station whose
    `tss/dof` stays well above 1 after the solve is the first place to look
-   for a break, a bad channel or a bad scan.
+   for a break, a bad channel or a bad scan. Below the totals, `chi2.txt` has
+   three tables that point to the usual fixes:
+   - **per source**: how well each source's scans fit. The sum of squares
+     grows with signal-to-noise, so bright sources stand highest; compare a
+     source with others of similar brightness. `chi2_sources.png` shows each
+     source's mean corrected residual spectrum. The bandpass is common to all
+     sources, so a source with a spectral feature of its own, or one that
+     changes within its scans, pulls the solved bandpass toward it: it shows
+     the feature with one sign and every other source shows it with the
+     opposite sign. List such a source in `apply_only_sources`: it is
+     corrected with the solved bandpass but does not enter the solve;
+   - **scans that fit worst on a station**: a scan far above the station's
+     typical scan, with the baseline carrying most of it. If one baseline
+     carries it, flag that baseline (`scan_flags` with both stations); if it
+     is spread over the station's baselines, the station's data in the scan
+     are corrupt: flag the station. If the station's bandpass
+     changed during it, `bpfit breaks` may suggest breaks on either side,
+     which give the scan a bandpass of its own;
+   - **channel edges** where a baseline's phase steps differently from scan
+     to scan: when the baselines of one station show the same edges, its
+     phase slope restarts at fixed channel blocks; fit per-scan terms over
+     those blocks with `scan_terms`.
+
+   Make these changes and solve again before looking for breaks: a source or
+   scan the model cannot fit raises the χ² every break is tested against.
 5. **Look for breaks.** `bpfit breaks campaign.toml <track>` and review
    `<output>/break_suggestions/` (see [Reviewing break
    suggestions](#reviewing-break-suggestions)). Add the breaks you accept to the
@@ -135,7 +159,8 @@ and 6 for every track.
 
 | file | what it holds |
 |---|---|
-| `chi2.txt` | the goodness of fit of the scan averages, with no bandpass and with the solved one: each scan's spectrum against its own band mean, as a sum of squares per degree of freedom, in total, per station and per feed pair. Near 1 is a spectrum the model explains down to the noise. |
+| `chi2.txt` | the goodness of fit of the scan averages, with no bandpass and with the solved one: each scan's spectrum against its own band mean, as a sum of squares per degree of freedom, in total, per station and per feed pair. Near 1 is a spectrum the model explains down to the noise. Then the fit per source, the scans that fit worst on each station, and the channel edges where a baseline's phase steps differently from scan to scan (see [Workflow](#workflow), step 4). |
+| `chi2_scans.png`, `chi2_sources.png`, `chi2_edges.png` | the three tables of `chi2.txt` as pictures: each station's fit in each scan against its median scan, with the sources marked; each source's mean corrected residual spectrum; and the scan-to-scan spread of the phase step at each channel edge of each baseline |
 | `timeline.txt` | every scan with its source, time span and stations, and the gaps a break could go in |
 | `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations` and two others |
 | `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per segment (with breaks) |
@@ -178,6 +203,11 @@ to weigh:
   either station's bandpass.
 - **One channel.** A change confined to one channel is often better flagged
   than broken.
+- **Breaks close together.** Breaks on both sides of one scan give that scan
+  a bandpass of its own, fitted from its baselines alone: the station's
+  bandpass changed during or around it. Solve with them and look at the scan
+  in `chi2.txt`'s worst scans: if it still fits badly, the bandpass moved
+  within the scan, and flagging it is better.
 
 The table ends with a `breaks = { … }` line that adopts every suggestion; copy
 the parts you accept into the track's table. The search does not change the

@@ -153,6 +153,13 @@ track's own, or the simulated one), and apply the configured flags.
 """
 function prepare_track(cfg::TrackConfig)
     ps = load_track(cfg.data; skip = cfg.skip_sources)
+    origin = track_origin(ps)
+    rows = scan_rows(ps, origin)
+    overlap = overlapping_sources(rows)
+    isempty(overlap) || error(
+        "track $(cfg.name) has sources observed at the same time by two sub-arrays: ",
+        join(("$a / $b" for (a, b) in overlap), ", "), "; list one of each pair in `skip_sources`"
+    )
     antab = antab_path(cfg)
     isfile(antab) || error(
         isnothing(cfg.antab) ?
@@ -171,8 +178,7 @@ function prepare_track(cfg::TrackConfig)
     for (sts, scan) in cfg.scan_flags
         flag_scan!(ps, sts, scan)
     end
-    origin = track_origin(ps)
-    return Track(cfg, ps, origin, scan_rows(ps, origin))
+    return Track(cfg, ps, origin, rows)
 end
 
 "Whether a Measurement Set's scan enters the bandpass solve."

@@ -10,7 +10,7 @@ run the `bpfit` app, or call [`prepare_track`](@ref), [`find_breaks`](@ref),
 module BPFitter
 
 using Gustavo
-using Gustavo.Fring: normalized_residuals, scan_intervals, step_tests, tss
+using Gustavo.Fring: baseline_spectra, normalized_residuals, scan_intervals, step_tests, tss
 using XRadio
 using FITSFiles
 using DimensionalData

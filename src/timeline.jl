@@ -86,9 +86,11 @@ cannot rank a sample into two scans, so one of each pair has to be skipped
 """
 function overlapping_sources(rows)
     found = Set{Tuple{String, String}}()
-    for (i, a) in pairs(rows), b in rows[(i + 1):end]
-        b.t0 >= a.t1 && break
-        a.source == b.source || push!(found, minmax(a.source, b.source))
+    for (i, a) in pairs(rows)
+        for b in rows[(i + 1):end]
+            b.t0 >= a.t1 && break
+            a.source == b.source || push!(found, minmax(a.source, b.source))
+        end
     end
     return sort!(collect(found))
 end

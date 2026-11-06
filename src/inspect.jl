@@ -42,14 +42,14 @@ end
 
 Scans whose ANTAB SEFD stands apart from the station's other scans of the same
 source. `ps` must hold the system temperatures and gain curves
-`XRadio.read_antab!` writes. A station's SEFD in a scan is the median Tsys/DPFU
-of the ANTAB rows inside it, over receptors and IFs. Opacity makes the SEFD
-depend strongly on elevation, so each scan is compared only with scans of the
-same source close to it in time, which are at similar elevations. A `(station,
-scan, hour, sefd, typical)` row is returned for every scan more than `factor`
-from `typical`, the median of the `2·neighbors` such scans nearest it
-(`neighbors` on either side away from the ends). Such a row is usually a
-failed measurement; flag the scan with `scan_flags`.
+`XRadio.read_antab!` writes. A station's SEFD in a scan it has data in is the
+median Tsys/DPFU of the ANTAB rows inside the scan, over receptors and IFs.
+Opacity makes the SEFD depend strongly on elevation, so each scan is compared
+only with scans of the same source close to it in time, which are at similar
+elevations. A `(station, scan, hour, sefd, typical)` row is returned for every
+scan more than `factor` from `typical`, the median of the `2·neighbors` such
+scans nearest it (`neighbors` on either side away from the ends). Such a row is
+usually a failed measurement; flag the scan with `scan_flags`.
 """
 function sefd_outliers(ps; factor = 3.0, neighbors = 2)
     A, R = XRadio.AntennaName, XRadio.ReceptorLabel
@@ -60,7 +60,9 @@ function sefd_outliers(ps; factor = 3.0, neighbors = 2)
         for ms in values(g)
             T = XRadio.system_temperatures(ms)
             dpfu = XRadio.gaincurves(ms)[:sensitivity]
+            on_scan = ms_stations(ms)
             for a in intersect(lookup(T, A), lookup(dpfu, A)), r in lookup(T, R)
+                String(a) in on_scan || continue
                 v = vec(parent(T[A(At(a)), R(At(r))])) ./ dpfu[A(At(a)), R(At(r))]
                 append!(get!(by_station, String(a), Float64[]), filter(x -> isfinite(x) && x > 0 && x != 999.0, v))
             end
@@ -102,7 +104,7 @@ function inspect_track(io::IO, cfg::TrackConfig)
     rows = scan_rows(ps, origin)
     println(io, "track ", cfg.name, "  (", cfg.data, ")")
     println(io, "sources:  ", join(track_sources(ps), ", "))
-    println(io, "stations: ", join(Gustavo.Calibration.DataGeometry(ps).antennas, ", "))
+    println(io, "stations: ", join(sort!(unique(reduce(vcat, (r.stations for r in rows); init = String[]))), ", "))
     ms = first(values(ps))
     ν = XRadio.frequencies(ms)
     @printf(io, "channels: %d, %.4f–%.4f GHz\n", length(ν), minimum(ν) / 1.0e9, maximum(ν) / 1.0e9)

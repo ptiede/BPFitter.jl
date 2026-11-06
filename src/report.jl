@@ -17,6 +17,9 @@ function write_reports(track::Track, s::TrackSolve; dir = track.cfg.output)
     boundaries = sort!(unique(reduce(vcat, values(s.breaks); init = Float64[])))
     write_timeline(joinpath(dir, "timeline.txt"), track.rows, boundaries)
     keep = in_solve(cfg)
+    before, after = scan_averages(track.ps), scan_averages(s.corrected)
+    solved = scan_fits(filter(keep, after))
+    edges = channel_edges(normalized_residuals(filter(keep, after)))
     open(joinpath(dir, "chi2.txt"), "w") do io
         println(io, "Goodness of fit of the scan averages, parallel hands: each scan's spectrum")
         println(io, "against its own band mean (the weighted total sum of squares per degree of")
@@ -27,10 +30,18 @@ function write_reports(track::Track, s::TrackSolve; dir = track.cfg.output)
         print_fit(io, track_tss(filter(keep, track.ps)))
         println(io, "\nmodel bandpass")
         print_fit(io, s.chi2; nparams = nparams(s), station_params = station_bandpass_params(s.model, s.sol.geom))
+        println(io)
+        print_sources(io, scan_fits(before), scan_fits(after), track.rows, left_out)
+        println(io)
+        print_worst_scans(io, solved, track.rows)
+        println(io)
+        print_channel_edges(io, edges)
     end
+    save(joinpath(dir, "chi2_scans.png"), plot_scan_fits(solved, track.rows))
+    save(joinpath(dir, "chi2_sources.png"), plot_source_residuals(normalized_residuals(after), track.rows))
+    save(joinpath(dir, "chi2_edges.png"), plot_channel_edges(edges))
     isempty(boundaries) || write_break_deltas(dir, s, boundaries, track.origin)
     selected = plotted_baselines(track, cfg.watch_stations)
-    before, after = scan_averages(track.ps), scan_averages(s.corrected)
     for bl in selected, (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
         save(joinpath(dir, "$(tag)_$(join(bl, "-")).png"), plot_stability(before, after, bl, track.origin; quantity))
     end
@@ -63,6 +74,259 @@ function print_fit(io::IO, q; nparams = 0, station_params = Dict{String, Int}())
         @printf(io, "    %-8s %10.4f\n", "$(fp[1])-$(fp[2])", sum(q.tss[FeedPair = At(fp)]) / sum(q.dof[FeedPair = At(fp)]))
     end
     return nothing
+end
+
+"""
+    scan_fits(averages) -> NamedTuple
+
+The parallel-hand sum of squares of each scan average of `averages` about its
+band mean, and its degrees of freedom, summed over feed pairs: `tss` and `dof`
+over (`Ti`, `AntennaPair`), and the scan name of each `Ti`.
+"""
+function scan_fits(averages)
+    spectra = baseline_spectra(averages)
+    q = tss(spectra)
+    parallel = [fp for fp in lookup(q.tss, FeedPair) if fp[1] == fp[2]]
+    total(A) = dropdims(sum(A[FeedPair = At(parallel)]; dims = FeedPair); dims = FeedPair)
+    return (; tss = total(q.tss), dof = total(q.dof), scans = String.(parent(spectra.scan_name)))
+end
+
+"""
+    print_sources(io, before, after, rows, left_out)
+
+The sum of squares per degree of freedom of each source's scans before and after
+the correction ([`scan_fits`](@ref)), not charged for the bandpass parameters.
+It grows with a source's signal-to-noise, so bright sources stand highest.
+`left_out` lists the sources and scans already left out of the solve.
+"""
+function print_sources(io::IO, before, after, rows, left_out)
+    source = Dict(r.scan => r.source for r in rows)
+    println(io, "per source (scan averages, every station; not charged for the bandpass parameters)")
+    @printf(io, "    %-14s %6s %10s %10s %10s\n", "source", "scans", "dof", "none", "bandpass")
+    for src in sort!(unique(values(source)))
+        mine(f) = [k for k in eachindex(f.scans) if get(source, f.scans[k], "") == src]
+        ratio(f) = (k = mine(f); sum(f.tss[Ti = k]) / sum(f.dof[Ti = k]))
+        k = mine(after)
+        isempty(k) && continue
+        @printf(
+            io, "    %-14s %6d %10d %10.4f %10.4f%s\n", src, length(k), sum(after.dof[Ti = k]), ratio(before), ratio(after),
+            src in left_out ? "  (not in the solve)" : ""
+        )
+    end
+    return nothing
+end
+
+"""
+    print_worst_scans(io, f, rows; factor = 3, limit = 20)
+
+The scans in which a station's baselines fit worst after the correction: the sum
+of squares per degree of freedom of the station's baselines in the scan against
+its median over the station's scans, for the `limit` scans furthest above it
+and at least `factor` times it, with the baseline that carries the largest share
+of the station's sum of squares in the scan. A scan whose excess sits on one
+baseline is a candidate for flagging that baseline (`scan_flags` with both
+stations); one spread over the station's baselines, for flagging the station.
+A run of them may be a station whose bandpass changed within the scans, which
+breaks on either side of each give a bandpass of its own.
+"""
+function print_worst_scans(io::IO, f, rows; factor = 3, limit = 20)
+    hour = Dict(r.scan => r.t0 for r in rows)
+    source = Dict(r.scan => r.source for r in rows)
+    pairs_ = lookup(f.tss, AntennaPair)
+    found = @NamedTuple{station::String, scan::String, ratio::Float64, typical::Float64, baseline::String, share::Float64}[]
+    for st in sort!(unique(reduce(vcat, collect.(pairs_))))
+        mine = [p for p in pairs_ if st in p]
+        x = vec(parent(sum(f.tss[AntennaPair = At(mine)]; dims = AntennaPair)))
+        d = vec(parent(sum(f.dof[AntennaPair = At(mine)]; dims = AntennaPair)))
+        k = findall(>(0), d)
+        length(k) >= 3 || continue
+        typical = median(x[k] ./ d[k])
+        for j in k
+            x[j] / d[j] >= factor * typical || continue
+            each = vec(parent(f.tss[Ti = j, AntennaPair = At(mine)]))
+            worst = argmax(each)
+            push!(found, (; station = String(st), scan = f.scans[j], ratio = x[j] / d[j], typical, baseline = join(mine[worst], "-"), share = each[worst] / x[j]))
+        end
+    end
+    sort!(found; by = r -> -r.ratio / r.typical)
+    println(io, "scans that fit worst on a station, against the station's median scan (at least $(factor)×)")
+    isempty(found) && return println(io, "    none")
+    @printf(
+        io, "    %-8s %-18s %-14s %8s %10s %10s %8s  %s\n", "station", "scan", "source", "hour", "tss/dof", "median", "ratio",
+        "worst baseline (share of the station's sum of squares)"
+    )
+    for r in first(found, limit)
+        @printf(
+            io, "    %-8s %-18s %-14s %8.3f %10.3f %10.3f %7.1f×  %s (%.0f%%)\n", r.station, r.scan, source[r.scan], hour[r.scan], r.ratio,
+            r.typical, r.ratio / r.typical, r.baseline, 100 * r.share
+        )
+    end
+    length(found) > limit && println(io, "    … and $(length(found) - limit) more")
+    return nothing
+end
+
+"""
+    channel_edges(residuals; min_scans = 5) -> NamedTuple
+
+How much the corrected phase step from each channel to the next changes from
+scan to scan, per baseline. On each baseline and parallel feed pair of the
+[`normalized_residuals`](@ref) `residuals` of scan averages, the step is taken
+in every scan with at least half its channels; its spread over the scans (the
+median absolute deviation, over at least `min_scans` scans) is divided by the
+median spread over the edges. `ratio` is (baseline × edge), the larger of the
+feed pairs, `NaN` where unmeasured; `baselines` are the antenna pairs and edge
+`c` lies between channels `c` and `c + 1`.
+"""
+function channel_edges(residuals; min_scans = 5)
+    r = residuals.r
+    pairs_, feeds = lookup(r, AntennaPair), lookup(r, FeedPair)
+    ratio = fill(NaN, length(pairs_), size(r, Frequency) - 1)
+    for (row, j) in enumerate(axes(r, AntennaPair)), q in axes(r, FeedPair)
+        feeds[q][1] == feeds[q][2] || continue
+        R = parent(permutedims(r[AntennaPair(j), FeedPair(q)], (Frequency, Ti)))
+        scans = [k for k in axes(R, 2) if 2 * count(isfinite, view(R, :, k)) > size(R, 1)]
+        length(scans) >= min_scans || continue
+        spread = map(firstindex(R, 1):(lastindex(R, 1) - 1)) do c
+            d = [rem2pi(angle(R[c + 1, k]) - angle(R[c, k]), RoundNearest) for k in scans if isfinite(R[c, k]) && isfinite(R[c + 1, k])]
+            length(d) >= min_scans ? median(abs.(d .- median(d))) : NaN
+        end
+        known = filter(isfinite, spread)
+        isempty(known) && continue
+        for c in eachindex(spread)
+            v = spread[c] / median(known)
+            isfinite(v) && (ratio[row, c] = isfinite(ratio[row, c]) ? max(ratio[row, c], v) : v)
+        end
+    end
+    return (; baselines = collect(pairs_), ratio)
+end
+
+"""
+    print_channel_edges(io, edges; factor = 4)
+
+The channel edges of [`channel_edges`](@ref) `edges` at least `factor` times
+their baseline's median edge. A station whose phase slope restarts at fixed
+channel blocks and changes from scan to scan shows the same edges on its
+baselines; fit per-scan terms over those blocks (`scan_terms`).
+"""
+function print_channel_edges(io::IO, edges; factor = 4)
+    println(io, "channel edges where a baseline's phase steps differently from scan to scan (at least $(factor)× its median edge)")
+    found = false
+    for (row, bl) in pairs(edges.baselines)
+        hits = [c for c in axes(edges.ratio, 2) if edges.ratio[row, c] >= factor]
+        isempty(hits) && continue
+        found = true
+        @printf(io, "    %-8s %s\n", join(bl, "-"), join(("$(c)|$(c + 1) $(@sprintf("%.1f", edges.ratio[row, c]))×" for c in hits), ", "))
+    end
+    found || println(io, "    none")
+    return nothing
+end
+
+const DIVERGING = ["#104281", "#3987e5", "#9ec5f4", "#f0efec", "#f4b1b0", "#e34948", "#9a2626"]
+const SEQUENTIAL = ["#f0efec", "#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
+const FEED_COLORS = ("#2a78d6", "#eb6834")
+const SURFACE = "#fcfcfb"
+
+"""
+    plot_scan_fits(f, rows) -> Figure
+
+Each station's fit in each scan ([`scan_fits`](@ref) `f`), scans in time order:
+the sum of squares per degree of freedom of the station's baselines in the scan
+over its median across the station's scans, on a log scale. The sources
+observed are labelled where they change.
+"""
+function plot_scan_fits(f, rows)
+    hour = Dict(r.scan => r.t0 for r in rows)
+    source = Dict(r.scan => r.source for r in rows)
+    order = sortperm(f.scans; by = sc -> get(hour, sc, Inf))
+    scans = f.scans[order]
+    pairs_ = lookup(f.tss, AntennaPair)
+    stations = sort!(unique(reduce(vcat, collect.(pairs_))))
+    z = fill(NaN, length(scans), length(stations))
+    for (i, st) in pairs(stations)
+        mine = [p for p in pairs_ if st in p]
+        x = vec(parent(sum(f.tss[AntennaPair = At(mine)]; dims = AntennaPair)))[order]
+        d = vec(parent(sum(f.dof[AntennaPair = At(mine)]; dims = AntennaPair)))[order]
+        k = findall(>(0), d)
+        isempty(k) && continue
+        typical = median(x[k] ./ d[k])
+        z[k, i] = log10.((x[k] ./ d[k]) ./ typical)
+    end
+    starts = [k for k in eachindex(scans) if k == firstindex(scans) || source[scans[k]] != source[scans[k - 1]]]
+    fig = Figure(size = (max(900, 12 * length(scans) + 200), 140 + 28 * length(stations)), backgroundcolor = SURFACE)
+    ax = Axis(
+        fig[1, 1]; backgroundcolor = SURFACE, yticks = (eachindex(stations), stations),
+        xticks = (starts, [source[scans[k]] for k in starts]), xticklabelrotation = π / 2, xticklabelsize = 10,
+        xlabel = "scans in time order (labelled where the source changes)", title = "station fit per scan, against the station's median scan",
+    )
+    hm = heatmap!(ax, eachindex(scans), eachindex(stations), clamp.(z, -1.5, 1.5); colormap = DIVERGING, colorrange = (-1.5, 1.5), nan_color = SURFACE)
+    ticks = [0.03, 0.1, 0.3, 1, 3, 10, 30]
+    Colorbar(fig[1, 2], hm; label = "tss/dof ÷ station median", ticks = (log10.(ticks), string.(ticks)))
+    return fig
+end
+
+"""
+    plot_source_residuals(residuals, rows) -> Figure
+
+The corrected residual spectrum of each source, one row per source: on each
+parallel feed pair the inverse-variance weighted mean over the source's scans
+and baselines of the [`normalized_residuals`](@ref) `residuals`, as amplitude
+(percent of the band mean) and phase (degrees). The bandpass is common to all
+sources, so a source with a spectral feature of its own pulls the solve toward
+it: its mean residual shows the feature with one sign and the other sources'
+with the opposite sign.
+"""
+function plot_source_residuals(residuals, rows)
+    r, var = residuals.r, residuals.var
+    source = Dict(rw.scan => rw.source for rw in rows)
+    scans = parent(residuals.scan_name)
+    ν = collect(lookup(r, Frequency)) ./ 1.0e9
+    feeds = lookup(r, FeedPair)
+    sources = sort!(unique([source[sc] for sc in scans if haskey(source, sc)]))
+    fig = Figure(size = (1000, 60 + 170 * length(sources)), backgroundcolor = SURFACE)
+    grid = (; xgridcolor = (:black, 0.06), ygridcolor = (:black, 0.06), backgroundcolor = SURFACE)
+    for (i, src) in pairs(sources)
+        ks = [k for k in eachindex(scans) if get(source, scans[k], "") == src]
+        amp = Axis(fig[i, 1]; ylabel = "$src\namplitude (%)", xlabel = i == length(sources) ? "frequency (GHz)" : "", grid...)
+        phase = Axis(fig[i, 2]; ylabel = "phase (deg)", xlabel = i == length(sources) ? "frequency (GHz)" : "", grid...)
+        for q in axes(r, FeedPair)
+            f = feeds[q][1]
+            f == feeds[q][2] || continue
+            m = map(eachindex(ν)) do c
+                R = vec(parent(r[Ti = ks, FeedPair = q, Frequency = c]))
+                W = inv.(vec(parent(var[Ti = ks, FeedPair = q, Frequency = c])))
+                ok = [i for i in eachindex(R, W) if isfinite(R[i]) && isfinite(W[i])]
+                isempty(ok) ? complex(NaN, NaN) : sum(W[ok] .* R[ok]) / sum(W[ok])
+            end
+            color = FEED_COLORS[mod1(f, length(FEED_COLORS))]
+            lines!(amp, ν, 100 .* (abs.(m) .- 1); color, linewidth = 2, label = "feed $f")
+            lines!(phase, ν, rad2deg.(angle.(m)); color, linewidth = 2, label = "feed $f")
+        end
+        i == 1 && axislegend(amp; position = :lt, framevisible = false, labelsize = 11)
+    end
+    Label(fig[0, 1:2], "mean corrected residual spectrum per source"; fontsize = 15)
+    return fig
+end
+
+"""
+    plot_channel_edges(edges) -> Figure
+
+The [`channel_edges`](@ref) of every baseline: how much the phase step across
+each channel edge changes from scan to scan, over the baseline's median edge.
+"""
+function plot_channel_edges(edges)
+    rows_ = [row for row in axes(edges.ratio, 1) if any(isfinite, view(edges.ratio, row, :))]
+    labels = [join(edges.baselines[row], "-") for row in rows_]
+    fig = Figure(size = (900, 140 + 16 * length(rows_)), backgroundcolor = SURFACE)
+    ax = Axis(
+        fig[1, 1]; backgroundcolor = SURFACE, yticks = (eachindex(rows_), labels), yticklabelsize = 9,
+        xticks = 1:2:size(edges.ratio, 2), xlabel = "channel edge c (between channels c and c + 1)",
+        title = "scan-to-scan spread of the phase step at each channel edge, over the baseline's median edge",
+    )
+    z = permutedims(log10.(clamp.(edges.ratio[rows_, :], 1, 30)))
+    hm = heatmap!(ax, axes(edges.ratio, 2), eachindex(rows_), z; colormap = SEQUENTIAL, colorrange = (0, log10(30)), nan_color = SURFACE)
+    ticks = [1, 2, 4, 10, 30]
+    Colorbar(fig[1, 2], hm; label = "spread ÷ median edge", ticks = (log10.(ticks), string.(ticks)))
+    return fig
 end
 
 function plotted_baselines(track, watch; partners = 2, quiet = 2)

@@ -177,6 +177,8 @@ end
         @test isnothing(check_gap(rows, 1.5))
         @test_throws "falls inside scans" check_gap(rows, 1.25)
         @test overlapping_sources(rows) == [("A", "B")]
+        later = vcat(rows[3:3], [(; source = "C", scan = "C_1", t0 = 2.1, t1 = 2.3, stations = ["Z"])])
+        @test overlapping_sources(vcat(rows[1:1], later)) == [("A", "C")]
     end
 
     @testset "break bookkeeping" begin
@@ -293,6 +295,11 @@ end
         for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "bandpass.zarr", "scan_delays.zarr")
             @test ispath(joinpath(cfg.output, f))
         end
+        # The corrected track fits to the noise: one source, no scan or channel edge stands out.
+        chi2 = read(joinpath(cfg.output, "chi2.txt"), String)
+        @test occursin(r"SRC +12 ", chi2)
+        @test occursin(r"scans that fit worst[^\n]*\n    none", chi2)
+        @test occursin(r"channel edges[^\n]*\n    none", chi2)
         exported = joinpath(cfg.corrected, "hops_T_SRC_bpcal.uvfits")
         @test 0.8 < BPFitter.scan_chi2(BPFitter.track_tss(load_uvfits(exported))) |> (q -> q.chi2 / q.dof) < 1.25
         rm(exported)
