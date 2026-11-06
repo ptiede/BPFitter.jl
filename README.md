@@ -42,7 +42,53 @@ bpfit apply   campaign.toml            # write corrected uvfits from the saved s
 bpfit run     campaign.toml [track…]   # sefd where needed, solve, apply, per track
 ```
 
-Each command runs on the named tracks, or on all of them.
+Each command runs on the named tracks, or on all of them, one after another in
+one Julia process: the code is compiled for the first track only, which on a
+small track is most of the time a command takes. Run a single track per call
+to keep a failure on one track from stopping the others.
+
+### File layout
+
+BPFitter reads one folder of HOPS uvfits per track and one ANTAB file per
+track, wherever the campaign file's `data` and `antab` patterns point. Paths in
+the campaign file are relative to it. A layout that matches
+[`examples/campaign.toml`](examples/campaign.toml):
+
+```
+campaign.toml
+data/
+  hops/
+    track1/                       # data = "data/hops/{track}"
+      hops_track1_SRC1.uvfits     # one file per source
+      hops_track1_SRC2.uvfits
+    track2/
+  antab/
+    t1.AN                         # antab = "data/antab/{label}.AN"
+    t2.AN
+```
+
+- A track's folder holds one uvfits per source, each with one channel per IF
+  (HOPS's layout): channel `k` is ANTAB IF `k`. The source is the file's
+  object name, and its scans are numbered within the file. Files whose names
+  contain `+avg`, `_corr` or `_bpcal` are left out, and so are those ending in
+  `_<source>.uvfits` for a source in `skip_sources`.
+- A track whose ANTAB file is missing takes the SEFDs `bpfit sefd` simulates,
+  written to its `output` folder as `simulated.AN`.
+
+Each track's outputs go to its `output` and `corrected` folders:
+
+```
+bpfit/track1/                     # output = "bpfit/{track}"
+  chi2.txt  chi2_*.png            # fit tables and plots (solve)
+  timeline.txt
+  phase_<A>-<B>.png  amp_<A>-<B>.png
+  solution_phase.png  solution_amp.png  break_delta.txt     # with breaks
+  bandpass.zarr  scan_delays.zarr # solutions, read by apply
+  break_suggestions/              # breaks: suggestions.txt and a plot per step
+  simulated.AN                    # sefd
+data/bpcal/track1/                # corrected = "data/bpcal/{track}"
+  hops_track1_SRC1_bpcal.uvfits   # apply and run, named by export_name
+```
 
 ### What a solve does
 
@@ -53,9 +99,11 @@ Each command runs on the named tracks, or on all of them.
    sources, with an explicit per-scan, per-baseline source term. The phase and
    log-amplitude of each segment are Ornstein–Uhlenbeck processes along
    frequency, with their correlation bandwidth and amplitude fit to the data.
-3. Fit a delay per station and scan on the bandpass-corrected data, apply it,
+3. Fit, on the bandpass-corrected data, a delay and a rate per station and
+   scan and each feed's delay offset from the first feed per scan, apply them,
    and solve again, with per-scan terms for any station configured with
-   `scan_terms`.
+   `scan_terms`. A delay that jumps from one scan to the next, on one feed or
+   both, needs no flag or break.
 4. Apply the solution and report the goodness of fit against the data without
    it.
 
@@ -124,8 +172,9 @@ A new campaign usually goes through these steps, one track at a time.
      grows with signal-to-noise, so bright sources stand highest; compare a
      source with others of similar brightness. `chi2_sources.png` shows each
      source's mean corrected residual spectrum. The bandpass is common to all
-     sources, so a source with a spectral feature of its own, or one that
-     changes within its scans, pulls the solved bandpass toward it: it shows
+     sources, so a source with a spectral feature of its own (an absorption
+     line along its line of sight, for example), or one that changes within
+     its scans, pulls the solved bandpass toward it: it shows
      the feature with one sign and every other source shows it with the
      opposite sign. List such a source in `apply_only_sources`: it is
      corrected with the solved bandpass but does not enter the solve;
@@ -139,7 +188,16 @@ A new campaign usually goes through these steps, one track at a time.
    - **channel edges** where a baseline's phase steps differently from scan
      to scan: when the baselines of one station show the same edges, its
      phase slope restarts at fixed channel blocks; fit per-scan terms over
-     those blocks with `scan_terms`.
+     those blocks with `scan_terms`. The groups must cover the band from
+     channel 1; a group of one channel has no slope to fit its delay to, so
+     flag that channel too.
+
+   A baseline with very high signal-to-noise, such as one between two
+   stations at the same site, can stay many times above 1 after the
+   correction from residuals of a degree or a percent that change from scan
+   to scan. `chi2_baselines.png` shows such a baseline standing alone; no
+   break or flag removes it, and residuals of that size are within the
+   systematic errors usually assigned to VLBI data.
 
    Make these changes and solve again before looking for breaks: a source or
    scan the model cannot fit raises the χ² every break is tested against.
@@ -159,12 +217,15 @@ and 6 for every track.
 
 | file | what it holds |
 |---|---|
-| `chi2.txt` | the goodness of fit of the scan averages, with no bandpass and with the solved one: each scan's spectrum against its own band mean, as a sum of squares per degree of freedom, in total, per station and per feed pair. Near 1 is a spectrum the model explains down to the noise. Then the fit per source, the scans that fit worst on each station, and the channel edges where a baseline's phase steps differently from scan to scan (see [Workflow](#workflow), step 4). |
-| `chi2_scans.png`, `chi2_sources.png`, `chi2_edges.png` | the three tables of `chi2.txt` as pictures: each station's fit in each scan against its median scan, with the sources marked; each source's mean corrected residual spectrum; and the scan-to-scan spread of the phase step at each channel edge of each baseline |
+| `chi2.txt` | the goodness of fit of the scan averages, with no bandpass and with the solved one: each scan's spectrum against its own band mean, as a sum of squares per degree of freedom, in total, per station and per feed pair. Near 1 is a spectrum the model explains down to the noise. Then the fit per source and per baseline, the scans that fit worst on each station, and the channel edges where a baseline's phase steps differently from scan to scan (see [Workflow](#workflow), step 4). |
+| `chi2_scans.png` | each station's fit (tss/dof, 1 is the noise) in each scan, scans in time order with the sources marked; the scans furthest above their station's median are numbered and listed under the plot, with the baseline that carries most of each |
+| `chi2_baselines.png` | every baseline at once, as station-by-station grids of the fit before and after the correction and of how much the bandpass changes it (also a table in `chi2.txt`) |
+| `chi2_sources.png` | each source's mean corrected residual spectrum, with its correlation `r` with the other sources'; the title names any source whose residual is the opposite of the others' |
+| `chi2_edges.png` | the scan-to-scan spread of the phase step at each channel edge of each baseline; the title names any station whose baselines share edges |
 | `timeline.txt` | every scan with its source, time span and stations, and the gaps a break could go in |
-| `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations` and two others |
+| `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations`, the four baselines that fit worst after it, and the two the solved bandpass changes most |
 | `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per segment (with breaks) |
-| `break_delta.txt` | how much each station's bandpass moves across each break (with breaks) |
+| `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
 | `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads |
 
 `breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`.
@@ -181,10 +242,13 @@ and 6 for every track.
   neither size) or `rejected`;
 - `gap F`: the step test that proposed it, and `F` and `needs`: the refit F test
   and the value it had to reach;
-- per feed, the size of the change across it: `shape`, the rms phase change
-  beyond its delay and band mean, in degrees; `scatter`, the rms amplitude
-  change about its band mean, in percent; and the `delay` the phase change
-  carries;
+- per feed, the size of the change across it: `span`, the phase change of the
+  highest channel less the lowest, in degrees; `ramp`, the part of it a delay
+  across the band makes, which the per-scan delays could take up; `shape`, the
+  rms phase change beyond that delay and the band mean, in degrees; and
+  `scatter`, the rms amplitude change about its band mean, in percent. A
+  candidate is refit and kept on its `shape` or `scatter`, so a change that is
+  mostly a delay can have a large `span` and a small `shape`;
 - the sources the station observed in the hour before and after.
 
 Each row has a plot of the phase and amplitude change against frequency. Things
@@ -219,9 +283,10 @@ large changes, so it takes a few minutes per track.
 ## Memory
 
 A track's visibilities, weights and flags are held in memory with one
-delay-corrected copy during a solve or a search round. A track of about 100
-scans, 10 stations and 32 channels takes about 2 GB, and its solve or search
-peaks near 7 GB, Julia itself included.
+delay-corrected copy during a solve or a search. A track of about 100 scans,
+10 stations and 32 channels takes about 2 GB, and its solve or search peaks at
+6–10 GB, Julia itself included. Several tracks in one call run one after
+another, and the peak stays that of the largest.
 
 ## Configuration reference
 
@@ -248,7 +313,7 @@ Track keys:
 | `skip_sources` | sources left out of the track |
 | `apply_only_sources`, `apply_only_scans` | left out of the solve, but corrected with the solved bandpass and exported |
 | `scan_delays` | fit a delay per station and scan between two bandpass solves (default `true`) |
-| `scan_terms` | station => channel groups over which a phase level and a delay are fit per scan beside its bandpass, for a station whose phase slope restarts at fixed channel blocks and changes from scan to scan |
+| `scan_terms` | station => channel groups over which a phase level and a delay are fit per scan beside its bandpass, for a station whose phase slope restarts at fixed channel blocks and changes from scan to scan; the groups cover the band from channel 1, and a one-channel group's channel is best flagged |
 | `quantization_efficiency` | a number, or station => number, for the a-priori amplitude calibration (default 1) |
 | `priors` | `{ bandwidth, phase_sigma, logamp_sigma }`: the centers of the hyperpriors on the bandpass's correlation bandwidth along frequency (Hz) and on the size of its phase (rad) and log-amplitude variations |
 | `watch_stations` | stations whose baselines get before/after plots |

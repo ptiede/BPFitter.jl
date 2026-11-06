@@ -272,8 +272,8 @@ function find_breaks(track::Track; search::BreakSearch = BreakSearch(), io::IO =
         println(io, "round with breaks ", _show_breaks(breaks), ": ", length(candidates), " candidates")
         for c in candidates
             @printf(
-                io, "  %-4s %7.2f h  gap F %8.2f  shape %s deg\n", c.station, c.hour, c.gap_F,
-                join([@sprintf("%.2f", rad2deg(x)) for x in c.change.shape], " ")
+                io, "  %-4s %7.2f h  gap F %8.2f  span %s deg, shape %s deg\n", c.station, c.hour, c.gap_F,
+                join([@sprintf("%.1f", rad2deg(x)) for x in c.change.span], " "), join([@sprintf("%.2f", rad2deg(x)) for x in c.change.shape], " ")
             )
         end
         flush(io)
@@ -360,6 +360,7 @@ function write_suggestions(dir, track::Track, r::BreakSearchResult)
     order = Dict("configured" => 1, "suggested" => 2, "dropped" => 3, "passed" => 4, "small" => 5, "rejected" => 6)
     rows = sort!(collect(values(latest)); by = t -> (order[status(t)], order[status(t)] > 3 ? -t.F : t.hour))
     ν = r.solve.sol.geom.channel_freqs ./ 1.0e9
+    degrees(x) = join([@sprintf("%.1f", rad2deg(v)) for v in x], " ")
     open(joinpath(dir, "suggestions.txt"), "w") do io
         println(io, "Bandpass breaks suggested by `bpfit breaks` for track $(track.cfg.name), for review.")
         println(io, "Hours are since UT midnight before the track's first sample. F is the refit F test")
@@ -368,20 +369,22 @@ function write_suggestions(dir, track::Track, r::BreakSearchResult)
         println(io, "rows passed their test, but another candidate of the same round explained more,")
         println(io, "often the other station of a baseline that shows the step. `small` rows passed")
         println(io, "the F test with a change below min_shape_deg and min_scatter_percent. The change")
-        println(io, "across each break is per feed, with the across-station median removed: shape is")
-        println(io, "the rms phase change beyond its delay and band mean, scatter the rms amplitude")
-        println(io, "change about its band mean. Only candidates whose change on the residuals reaches")
-        println(io, "one of those sizes are refit.\n")
+        println(io, "across each break is per feed, with the across-station median removed: span is")
+        println(io, "the phase change of the highest channel less the lowest; ramp the part of it a")
+        println(io, "delay across the band makes, which the per-scan delays could take up; shape the")
+        println(io, "rms phase change beyond that delay and the band mean; scatter the rms amplitude")
+        println(io, "change about its band mean. Only candidates whose shape or scatter on the")
+        println(io, "residuals reaches min_shape_deg or min_scatter_percent are refit.\n")
         @printf(
-            io, "%-10s %-4s %7s %8s %9s %7s  %-13s  %-13s  %-15s  %s\n", "status", "stn", "hour", "gap F", "F", "needs",
-            "shape (deg)", "scatter (%)", "delay (ns)", "sources 1 h before | after"
+            io, "%-10s %-4s %7s %8s %9s %7s  %-11s  %-11s  %-11s  %-11s  %s\n", "status", "stn", "hour", "gap F", "F", "needs",
+            "span (deg)", "ramp (deg)", "shape (deg)", "scatter (%)", "sources 1 h before | after"
         )
         for t in rows
             c = r.changes[(t.station, t.hour)]
             @printf(
-                io, "%-10s %-4s %7.2f %8.2f %9.2f %7.2f  %-13s  %-13s  %-15s  %s\n", status(t), t.station, t.hour, t.gap_F, t.F, t.threshold,
-                join([@sprintf("%.2f", rad2deg(x)) for x in c.shape], " "), join([@sprintf("%.2f", 100x) for x in c.scatter], " "),
-                join([@sprintf("%.3f", 1.0e9x) for x in c.delay], " "), _nearby_sources(track.rows, t.station, t.hour)
+                io, "%-10s %-4s %7.2f %8.2f %9.2f %7.2f  %-11s  %-11s  %-11s  %-11s  %s\n", status(t), t.station, t.hour, t.gap_F, t.F,
+                t.threshold, degrees(c.span), degrees(c.ramp), degrees(c.shape), join([@sprintf("%.1f", 100x) for x in c.scatter], " "),
+                _nearby_sources(track.rows, t.station, t.hour)
             )
             save(joinpath(dir, "$(status(t))_$(t.station)_$(t.hour).png"), plot_break_change(c, ν, t, status(t), _nearby_sources(track.rows, t.station, t.hour)))
         end
@@ -420,7 +423,13 @@ function plot_break_change(c::BreakChange, ν, t::BreakTest, status, sources)
     amp = Axis(fig[2, 1]; ylabel = "amplitude change (%)", xlabel = "frequency (GHz)", grid...)
     for f in axes(c.dp, 2)
         color = feed_colors[mod1(f, length(feed_colors))]
-        lines!(phase, ν, rad2deg.(view(c.dp, :, f)); color, linewidth = 2, label = @sprintf("feed %d: shape %.2f°, delay %.3f ns", f, rad2deg(c.shape[f]), 1.0e9 * c.delay[f]))
+        lines!(
+            phase, ν, rad2deg.(view(c.dp, :, f)); color, linewidth = 2,
+            label = @sprintf(
+                "feed %d: span %.1f°, delay %.3f ns (ramp %.1f°), shape %.1f°", f, rad2deg(c.span[f]), 1.0e9 * c.delay[f],
+                rad2deg(c.ramp[f]), rad2deg(c.shape[f])
+            )
+        )
         lines!(amp, ν, 100 .* view(c.da, :, f); color, linewidth = 2, label = @sprintf("feed %d: scatter %.2f%%", f, 100 * c.scatter[f]))
     end
     axislegend(phase; position = :lt, framevisible = false, labelsize = 11)
