@@ -1,21 +1,25 @@
 # BPFitter.jl
 
+!! Note this README was written with the aid of Claude. If there is an issue please file it on GitHub.
+
 Joint bandpass calibration of HOPS-fringed VLBI tracks, built on
 [Gustavo](https://github.com/ptiede/Gustavo.jl).
 
-The station bandpass is a property of the instrument, not of the source, so
-BPFitter solves one bandpass per station and feed from every source of a track
-together. A station's bandpass is cut into segments only where the data show it
-changed abruptly. The breaks are set in the campaign file. `bpfit breaks`
-suggests candidates: it tests each gap between a station's scans for a step,
-refits the track with the strongest candidates, and writes a table and plots
-of each for you to review before adding it. Slow changes are left to the
-per-scan terms.
+The goal of this package is to correct residual issues in the EHT-HOPS pipeline,
+specifically for EHT data that has both ALMA pre-polconvert and NOEMA, which
+often causes issues with the data. The main things we try to correct for are 
+residual delays/bandpass at sites, or relative delay breaks between two feeds. 
+In addition, we do a very small fringe fit on the data to detect any residual
+delays in the data. 
+
+This repo contains various scripts built upon `Gustavo` which provides the basic
+functions and interface. Solutions are saved as zarr files. 
 
 ## Install
 
-BPFitter needs Julia 1.12 or later. Install the `bpfit` app with
+BPFitter needs Julia 1.12 or later thanks to its *app* functionality. 
 
+Install the `bpfit` app with
 ```
 pkg> app add https://github.com/ptiede/BPFitter.jl
 ```
@@ -23,16 +27,14 @@ pkg> app add https://github.com/ptiede/BPFitter.jl
 Julia puts the app in `~/.julia/bin`, which must be on the `PATH`. Update it
 with `pkg> app update BPFitter`.
 
-Tracks without an ANTAB file take simulated SEFDs from
-[ngehtsim](https://github.com/Smithsonian/ngehtsim) (its `refactor` branch),
-which BPFitter runs with [uv](https://docs.astral.sh/uv/); `uv` must be on the
-`PATH`.
+## Functionality
 
-## Use
+This repo provides functionality through several subfunctions in the `bpfit` function.
+To run the function, specify a configuration TOML file. An example is provided in `examples/campaign.toml`
 
-Describe the campaign in a TOML file (see
-[`examples/campaign.toml`](examples/campaign.toml)), then
 
+
+The current functions are:
 ```
 bpfit inspect campaign.toml            # sources, stations, timeline, dead channels, sub-array overlaps, odd SEFDs
 bpfit sefd    campaign.toml            # simulate ANTAB files for tracks that have none
@@ -41,15 +43,32 @@ bpfit solve   campaign.toml            # solve; writes solutions, χ² tables an
 bpfit apply   campaign.toml            # write corrected uvfits from the saved solutions
 bpfit run     campaign.toml [track…]   # sefd where needed, solve, apply, per track
 ```
-
 Each command runs on the named tracks, or on all of them, one after another in
 one Julia process: the code is compiled for the first track only, which on a
 small track is most of the time a command takes. Run a single track per call
 to keep a failure on one track from stopping the others.
 
+
+Some additional notes are below
+
+## Apriori Calibration
+
+There are two ways to provide a priori amplitude information i.e., SEFDs, which include gain dpfu's, system temperatures, etc.
+The first preferred way is to provide a standard EHT metadata package. We assume you the user have access to this. 
+
+The second way if the metadata package is unavailable is to simulate it with [ngehtsim](https://github.com/Smithsonian/ngehtsim) (its `refactor` branch),
+which BPFitter runs with [uv](https://docs.astral.sh/uv/). This assumes that a user has `uv` installed and in its `PATH`.
+
 ### File layout
 
-BPFitter reads one folder of HOPS uvfits per track and one ANTAB file per
+We assume that tracks are organized into distinct folders. That is, all the sources in a
+single EHT track will be assumed to be in a single folder. This is important because we 
+assume a priori (i.e., unless breaks are put in) that the bandpass is constant across all
+sources. We do this to transfer bandpass solutions from strong calibration targets to weak ones. 
+If you really want an independent bandpass per scan, you can manually put breaks in between each scan.
+
+
+In more detail, `bpfit` reads one folder of HOPS uvfits per track and one ANTAB file per
 track, wherever the campaign file's `data` and `antab` patterns point. Paths in
 the campaign file are relative to it. A layout that matches
 [`examples/campaign.toml`](examples/campaign.toml):
@@ -67,15 +86,15 @@ data/
     t2.AN
 ```
 
-- A track's folder holds one uvfits per source, each with one channel per IF
-  (HOPS's layout): channel `k` is ANTAB IF `k`. The source is the file's
-  object name, and its scans are numbered within the file. Files whose names
+- A track's folder holds one uvfits per source, we assume that we have not band 
+  averaged the data, e.g., there are 32 EHT IFs (or SPWs or HOPS channels depending on your preferred language)
+  The source is the file's object name, and its scans are numbered within the file. Files whose names
   contain `+avg`, `_corr` or `_bpcal` are left out, and so are those ending in
   `_<source>.uvfits` for a source in `skip_sources`.
 - A track whose ANTAB file is missing takes the SEFDs `bpfit sefd` simulates,
   written to its `output` folder as `simulated.AN`.
 
-Each track's outputs go to its `output` and `corrected` folders:
+Each track's outputs go to its `output` and `corrected` folders as specified in the TOML file:
 
 ```
 bpfit/track1/                     # output = "bpfit/{track}"
@@ -90,7 +109,7 @@ data/bpcal/track1/                # corrected = "data/bpcal/{track}"
   hops_track1_SRC1_bpcal.uvfits   # apply and run, named by export_name
 ```
 
-### What a solve does
+### What `bpfit solve` does
 
 1. Load every source's uvfits for the track, put the visibilities in janskys
    from the ANTAB system temperatures and gain curves, and apply the configured
