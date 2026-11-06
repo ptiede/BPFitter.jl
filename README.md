@@ -249,64 +249,6 @@ and 6 for every track.
 
 `breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`.
 
-## Reviewing break suggestions
-
-`suggestions.txt` has one row per break or candidate:
-
-- `status`: `configured` (in the campaign file), `suggested`, `dropped` (kept
-  during the search, then removed when retested against the solve with all the
-  others), `passed` (it passed its test, but another candidate of the same
-  round explained more, often the other station of a baseline that shows the
-  step), `small` (it passed the F test, but its change in the refit reaches
-  neither size) or `rejected`;
-- `gap F`: the step test that proposed it, and `F` and `needs`: the refit F test
-  and the value it had to reach;
-- per feed, the size of the change across it: `span`, the phase change of the
-  highest channel less the lowest, in degrees; `ramp`, the part of it a delay
-  across the band makes, which the per-scan delays could take up; `shape`, the
-  rms phase change beyond that delay and the band mean, in degrees; and
-  `scatter`, the rms amplitude change about its band mean, in percent. A
-  candidate is refit and kept on its `shape` or `scatter`, so a change that is
-  mostly a delay can have a large `span` and a small `shape`;
-- the sources the station observed in the hour before and after.
-
-Each row has a plot of the phase and amplitude change against frequency. Things
-to weigh:
-
-- **Size.** A real bandpass change usually has a shape you can see in the
-  plot: a slope, a curve, or a jump at the edge of a block of channels.
-  Channel-to-channel scatter of a degree or two with no shape is close to the
-  noise of the solution.
-- **Sources.** A change that comes with a change of the sources observed can
-  come from the sources rather than the instrument, for example from source
-  structure on long baselines or from noisy delays on weak scans.
-- **Pairs of stations.** A change seen only on the baseline between two
-  stations can be given to either one, and the search lists both. If the two
-  are at the same site, the change may belong to that baseline rather than to
-  either station's bandpass.
-- **One channel.** A change confined to one channel is often better flagged
-  than broken.
-- **Breaks close together.** Breaks on both sides of one scan give that scan
-  a bandpass of its own, fitted from its baselines alone: the station's
-  bandpass changed during or around it. Solve with them and look at the scan
-  in `chi2.txt`'s worst scans: if it still fits badly, the bandpass moved
-  within the scan, and flagging it is better.
-
-The table ends with a `breaks = { … }` line that adopts every suggestion; copy
-the parts you accept into the track's table. The search does not change the
-campaign file or the solve.
-
-The search fits the per-scan delays once and refits only the candidates with
-large changes, so it takes a few minutes per track.
-
-## Memory
-
-A track's visibilities, weights and flags are held in memory with one
-delay-corrected copy during a solve or a search. A track of about 100 scans,
-10 stations and 32 channels takes about 2 GB, and its solve or search peaks at
-6–10 GB, Julia itself included. Several tracks in one call run one after
-another, and the peak stays that of the largest.
-
 ## Configuration reference
 
 The campaign file has a `[defaults]` table, one `[tracks.<name>]` table per
