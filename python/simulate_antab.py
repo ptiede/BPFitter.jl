@@ -13,15 +13,23 @@ as ANTAB system temperatures are. The weather is the site's record for each
 UT day the track covers (or the month's climatology, with --weather median and
 the other ngehtsim forms), at each IF's center frequency.
 
+The receivers are a named ngehtsim array's (--array) or ngehtsim's defaults for
+a list of sites (--sites); ngehtsim drops a named array's settings when a site
+list is given, so exactly one is accepted. --overrides names a TOML file of
+ngehtsim's per-station overrides (T_R_overrides, sideband_ratio_overrides, ...),
+passed to its obs_generator as given.
+
 The file has a DPFU of 1 and a flat gain curve, so the TSYS values read as
 SEFDs, one value per scan and IF, shared by both feeds.
 
     uv run --project python python python/simulate_antab.py \
-        --out sim.AN --array ARRAY --stations AA=ALMA,KT=KP,... [--weather exact] file.uvfits ...
+        --out sim.AN (--array ARRAY | --sites ALMA,KP,...) [--overrides overrides.toml] \
+        --stations AA=ALMA,KT=KP,... [--weather exact] file.uvfits ...
 """
 
 import argparse
 import datetime
+import tomllib
 
 import numpy as np
 
@@ -32,6 +40,19 @@ from ngehtsim.obs.observation_template import ObservationTemplate
 
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 MJD_UNIX_ZERO = 40587.0
+OVERRIDES = (
+    "T_R_overrides",
+    "sideband_ratio_overrides",
+    "D_overrides",
+    "ap_eff_overrides",
+    "surf_rms_overrides",
+    "receiver_configuration_overrides",
+    "bandwidth_overrides",
+    "lo_freq_overrides",
+    "hi_freq_overrides",
+    "wind_loading_overrides",
+    "custom_receivers",
+)
 
 
 def ut_date(mjd):
@@ -65,10 +86,23 @@ def station_samples(path, stations):
     return out, np.asarray(ds.channel_frequency_hz), float(ds.channel_bandwidth_hz[0]), ds.ra_hours, ds.dec_degrees
 
 
-def context(array, day, freq_hz, bandwidth_hz, ra_hours, dec_degrees, weather):
+def read_overrides(path):
+    if path is None:
+        return {}
+    with open(path, "rb") as io:
+        overrides = tomllib.load(io)
+    bad = sorted(set(overrides) - set(OVERRIDES))
+    if bad:
+        raise ValueError(f"{path}: unknown ngehtsim override(s) {bad}; valid ones are {list(OVERRIDES)}")
+    return overrides
+
+
+def context(receivers, day, freq_hz, bandwidth_hz, ra_hours, dec_degrees, weather, sites):
+    """ngehtsim's station context; `receivers` holds `array`, `sites` and the overrides."""
     gen = obs_generator(
         settings=dict(
-            array=array,
+            array=receivers["array"],
+            sites=receivers["sites"],
             RA=ra_hours,
             DEC=dec_degrees,
             frequency=freq_hz / 1.0e9,
@@ -80,9 +114,15 @@ def context(array, day, freq_hz, bandwidth_hz, ra_hours, dec_degrees, weather):
             weather_year=day.year,
             weather_day=day.day,
             random_seed=0,
-        )
+        ),
+        **receivers["overrides"],
     )
-    return gen.station_context()
+    ctx = gen.station_context()
+    missing = sorted(set(sites) - set(ctx["tau"]))
+    if missing:
+        source = f"array {receivers['array']}" if receivers["array"] else "--sites"
+        raise ValueError(f"site(s) {missing} in --stations are not in {source}; ngehtsim has {sorted(map(str, ctx['tau']))}")
+    return ctx
 
 
 def apriori_sefd(ctx, site, el):
@@ -107,12 +147,20 @@ def antab_time(mjd):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--array", required=True, help="ngehtsim array whose receiver settings apply")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--array", help="ngehtsim array whose sites and receiver settings apply")
+    group.add_argument("--sites", help="ngehtsim site names, comma-separated, with ngehtsim's default receivers")
+    parser.add_argument("--overrides", help="TOML file of ngehtsim per-station overrides")
     parser.add_argument("--stations", required=True, help="CODE=SITE pairs, comma-separated")
     parser.add_argument("--weather", default="exact")
     parser.add_argument("uvfits", nargs="+")
     args = parser.parse_args()
     stations = dict(pair.split("=") for pair in args.stations.split(","))
+    receivers = dict(
+        array=args.array,
+        sites=args.sites.split(",") if args.sites else None,
+        overrides=read_overrides(args.overrides),
+    )
 
     freqs = None
     contexts = {}
@@ -131,7 +179,7 @@ def main():
                 for fc in freqs:
                     key = (day, float(fc), ra, dec)
                     if key not in contexts:
-                        contexts[key] = context(args.array, day, fc, bw, ra, dec, args.weather)
+                        contexts[key] = context(receivers, day, fc, bw, ra, dec, args.weather, stations.values())
                     values.append(float(np.mean(apriori_sefd(contexts[key], stations[name], el[scan]))))
                 rows.setdefault(name, []).append((tm, values))
 

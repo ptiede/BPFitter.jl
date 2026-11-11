@@ -30,12 +30,14 @@ alpha = 1e-3                # false-alarm rate of the refit F test, also require
 tries = 4                   # candidates refit per round, highest gap F first
 min_gap_minutes = 3.0
 
-# For tracks without ANTAB files: ngehtsim's array settings and its site name
-# for every station code in the data.
+# For tracks without ANTAB files: ngehtsim's array settings (or `sites`, a list
+# of ngehtsim sites with its default receivers, in place of `array`), its site
+# name for every station code in the data, and optional per-station overrides.
 [sefd]
 array = "ARRAY_NAME"
 weather = "exact"
 stations = { S1 = "SITE1", S2 = "SITE2", S3 = "SITE3" }
+T_R_overrides = { SITE1 = { Band6 = 60.0 } }
 
 [tracks.track1]
 label = "t1"

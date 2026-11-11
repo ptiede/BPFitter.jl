@@ -105,6 +105,7 @@ bpfit/track1/                     # output = "bpfit/{track}"
   bandpass.zarr  scan_delays.zarr # solutions, read by apply
   break_suggestions/              # breaks: suggestions.txt and a plot per step
   simulated.AN                    # sefd
+  simulated_overrides.toml        # sefd, with ngehtsim overrides
 data/bpcal/track1/                # corrected = "data/bpcal/{track}"
   hops_track1_SRC1_bpcal.uvfits   # apply and run, named by export_name
 ```
@@ -247,7 +248,8 @@ and 6 for every track.
 | `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
 | `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads |
 
-`breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`.
+`breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`
+(and `simulated_overrides.toml` when `[sefd]` has overrides).
 
 ## Configuration reference
 
@@ -287,10 +289,71 @@ must also pass; `tries` (4), the candidates refit per round;
 `min_gap_minutes` (3), the shortest gap between a station's scans a break may
 go in.
 
-`[sefd]`, for tracks without ANTAB files: `array`, ngehtsim's array settings;
-`stations`, ngehtsim's site name for every station code in the data (there is no
-default table, because ngehtsim's two-letter codes are not the same as the
-data's); `weather` (`"exact"`).
+`[sefd]`, for tracks without ANTAB files: see [Simulated SEFDs](#simulated-sefds).
+
+### Simulated SEFDs
+
+`bpfit sefd` writes an ANTAB file of a-priori SEFDs from ngehtsim's weather,
+receiver and dish tables, one value per station, scan and IF, shared by both
+feeds. For each scan it follows ngehtsim's thermal model at the scan's
+elevations and the IF's center frequency,
+
+    tau  = tau_zenith / sin(el)
+    Tb   = T_CMB exp(-tau) + Tatm (1 - exp(-tau))
+    Tsys = (T_R + eta_ff Tb + (1 - eta_ff) Tgnd) (1 + sideband_ratio)
+    SEFD = 2 k Tsys / A_eff × wind factor
+
+and writes `SEFD exp(tau)`, corrected for the opacity as ANTAB system
+temperatures are. The source's own contribution to Tsys is left out, as for a
+Tsys measured off source. The file has a DPFU of 1 and a flat gain curve, so
+each TSYS value reads as an SEFD in Jy.
+
+The receivers come from exactly one of two keys:
+
+- `array`: a named ngehtsim array, with its sites and its own receiver, dish
+  and efficiency settings. Choose the one whose receivers match the year of the
+  data.
+
+  | `array` | sites |
+  |---|---|
+  | `EHT2017` | ALMA, APEX, IRAM, JCMT, LMT, SMA, SMT, SPT |
+  | `EHT2018` | `EHT2017` and GLT |
+  | `EHT2021` | ALMA, APEX, GLT, IRAM, JCMT, KP, NOEMA, SMA, SMT, SPT |
+  | `EHT2022`, `EHT2023` | `EHT2021` and LMT |
+  | `ngEHT` | `EHT2023` and BAJA, CNI, GAM, HAY, JELM, KVNYS, KVNPC, LAS, LLA, OVRO |
+
+- `sites`: a list of ngehtsim site names, which take ngehtsim's default
+  receiver and dish tables.
+
+ngehtsim drops a named array's settings whenever a site list is given, so
+`array` and `sites` cannot be combined; giving both, or neither, is an error.
+
+The other keys:
+
+| key | meaning |
+|---|---|
+| `stations` | station code in the data => ngehtsim site name, for every station; there is no default table, because ngehtsim's two-letter codes are not the data's. Every site must be in the array or in `sites` |
+| `weather` | ngehtsim's weather form (default `"exact"`): `"exact"` takes each site's record for each UT day the track covers, and stops with an error when ngehtsim has no record for that day; `"median"`, `"mean"`, `"good"` and `"bad"` take the month's climatology |
+| `T_R_overrides`, `sideband_ratio_overrides`, `D_overrides`, `ap_eff_overrides`, `surf_rms_overrides`, `receiver_configuration_overrides`, `bandwidth_overrides`, `lo_freq_overrides`, `hi_freq_overrides`, `wind_loading_overrides`, `custom_receivers` | ngehtsim's per-station overrides, each a table from site to setting in ngehtsim's format, passed to its `obs_generator` as given and applied on top of the array's or the default settings |
+
+```toml
+[sefd]
+array = "EHT2018"                        # or: sites = ["ALMA", "SMT", "KP"]
+weather = "exact"
+stations = { AA = "ALMA", SZ = "SMT" }
+T_R_overrides = { SMT = { Band6 = 60.0 } }
+sideband_ratio_overrides = { ALMA = { Band6 = 0.0 } }
+```
+
+When there are overrides, `bpfit sefd` writes them to
+`<output>/simulated_overrides.toml`, which records what the simulated ANTAB
+file was made with. Unknown keys and override names are an error, both when the
+campaign file is read and in `python/simulate_antab.py`, which also stops when a
+site in `stations` is missing from the array or the site list.
+
+ngehtsim reads each uvfits file in full before any SEFD is computed, and its
+reader requires the `INTTIM` random parameter, although the SEFDs do not depend
+on the integration time.
 
 ## Julia interface
 

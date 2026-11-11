@@ -53,23 +53,62 @@ function BandpassPriors(; bandwidth = 96.0e6, phase_sigma = 0.1, logamp_sigma = 
 end
 
 """
-    SimulatedSEFD(; array, stations, weather = "exact")
+    SimulatedSEFD(; array = nothing, sites = String[], stations, weather = "exact", overrides...)
 
 How [`simulate_antab`](@ref) runs ngehtsim for a track with no ANTAB file.
-`array` is the ngehtsim array whose receiver and efficiency settings apply.
+
+The receivers come from one of two sources, and exactly one must be given:
+- `array`: a named ngehtsim array (`"EHT2017"`, ..., `"EHT2023"`, `"ngEHT"`),
+  whose site list and per-array receiver, dish and efficiency settings apply.
+- `sites`: an explicit list of ngehtsim site names, which take ngehtsim's
+  default receiver and dish tables. ngehtsim drops a named array's settings
+  whenever a site list is given, so the two cannot be combined.
+
 `stations` maps each station code in the data to its ngehtsim site name
 (`"KT" => "KP"`); ngehtsim's own two-letter codes are not the EHT's, so every
-station needs an entry. `weather` is ngehtsim's weather form: `"exact"` takes
-each UT day's record, `"median"` and the others take climatology for the month.
+station needs an entry, and each site must be in the array or in `sites`.
+`weather` is ngehtsim's weather form: `"exact"` takes each UT day's record,
+`"median"` and the others take climatology for the month.
+
+`overrides` are ngehtsim's per-station overrides, passed to its
+`obs_generator` as given and applied on top of the array's or the default
+settings. The valid names are those of `SEFD_OVERRIDES`; each value maps an
+ngehtsim site to its setting in ngehtsim's format, for example
+`T_R_overrides = Dict("KP" => Dict("Band6" => 60.0))`.
 """
 struct SimulatedSEFD
-    array::String
+    array::Union{String, Nothing}
+    sites::Vector{String}
     stations::Dict{String, String}
     weather::String
+    overrides::Dict{String, Any}
 end
-function SimulatedSEFD(; array, stations, weather = "exact")
-    return SimulatedSEFD(String(array), Dict(String(k) => String(v) for (k, v) in stations), String(weather))
+function SimulatedSEFD(; array = nothing, sites = String[], stations, weather = "exact", overrides...)
+    isnothing(array) == isempty(sites) &&
+        error("[sefd] needs exactly one of `array` or `sites`: ngehtsim ignores a named array's settings when a site list is given")
+    bad = setdiff(String.(keys(overrides)), SEFD_OVERRIDES)
+    isempty(bad) || error("unknown ngehtsim override(s) $(sort(bad)); valid ones are $(collect(SEFD_OVERRIDES))")
+    sites = String.(sites)
+    stations = Dict(String(k) => String(v) for (k, v) in stations)
+    if !isempty(sites)
+        missing_sites = sort!(setdiff(values(stations), sites))
+        isempty(missing_sites) || error("[sefd] stations map to site(s) $missing_sites that are not in `sites`")
+    end
+    array = isnothing(array) ? nothing : String(array)
+    return SimulatedSEFD(array, sites, stations, String(weather), Dict{String, Any}(String(k) => v for (k, v) in overrides))
 end
+
+"""
+    SEFD_OVERRIDES
+
+The ngehtsim `obs_generator` overrides a [`SimulatedSEFD`](@ref) may set. Each
+maps an ngehtsim site to its setting, in ngehtsim's format.
+"""
+const SEFD_OVERRIDES = (
+    "T_R_overrides", "sideband_ratio_overrides", "D_overrides", "ap_eff_overrides",
+    "surf_rms_overrides", "receiver_configuration_overrides", "bandwidth_overrides",
+    "lo_freq_overrides", "hi_freq_overrides", "wind_loading_overrides", "custom_receivers",
+)
 
 """
     TrackConfig
@@ -193,7 +232,7 @@ function read_campaign(path)
         tracks[name] = _track_config(name, merge(defaults, t), root)
     end
     search = BreakSearch(; _symbol_keys(_check_keys(get(tbl, "breaks", Dict{String, Any}()), ("min_F", "alpha", "min_shape_deg", "min_scatter_percent", "min_gap_minutes", "tries"), "[breaks] of $path"))...)
-    sefd = haskey(tbl, "sefd") ? SimulatedSEFD(; _symbol_keys(_check_keys(tbl["sefd"], ("array", "stations", "weather"), "[sefd] of $path"))...) : nothing
+    sefd = haskey(tbl, "sefd") ? SimulatedSEFD(; _symbol_keys(_check_keys(tbl["sefd"], ("array", "sites", "stations", "weather", SEFD_OVERRIDES...), "[sefd] of $path"))...) : nothing
     return Campaign(abspath(path), tracks, order, search, sefd)
 end
 

@@ -153,6 +153,24 @@ end
         @test c.search.min_F == 40.0 && c.search.min_shape_deg == 2.0 && c.search.min_scatter_percent == 5.0 && c.search.tries == 4
         @test c.sefd.stations == Dict("AA" => "ALMA")
         @test c.sefd.array == "ARRAY"
+        @test isempty(c.sefd.sites) && isempty(c.sefd.overrides)
+
+        listed = read_campaign(write_campaign(mktempdir(), """
+            [sefd]
+            sites = ["ALMA", "KP"]
+            stations = { AA = "ALMA", KT = "KP" }
+            T_R_overrides = { KP = { Band6 = 60.0 } }
+            [tracks.A]
+            data = "d"
+            output = "o"
+            """))
+        @test isnothing(listed.sefd.array)
+        @test listed.sefd.sites == ["ALMA", "KP"]
+        @test listed.sefd.overrides == Dict("T_R_overrides" => Dict("KP" => Dict("Band6" => 60.0)))
+        @test_throws "exactly one of `array` or `sites`" BPFitter.SimulatedSEFD(; array = "EHT2023", sites = ["ALMA"], stations = Dict("AA" => "ALMA"))
+        @test_throws "exactly one of `array` or `sites`" BPFitter.SimulatedSEFD(; stations = Dict("AA" => "ALMA"))
+        @test_throws "site(s) [\"KP\"] that are not in `sites`" BPFitter.SimulatedSEFD(; sites = ["ALMA"], stations = Dict("AA" => "ALMA", "KT" => "KP"))
+        @test_throws "unknown ngehtsim override(s) [\"T_R\"]" BPFitter.SimulatedSEFD(; array = "EHT2023", stations = Dict("AA" => "ALMA"), T_R = Dict())
         @test_throws "no track \"C\"" c["C"]
 
         bad = write_campaign(mktempdir(), "[defaults]\nouptut = \"x\"\n[tracks.A]\ndata = \"d\"\n")

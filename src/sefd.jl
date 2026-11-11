@@ -8,13 +8,22 @@ ngehtsim's a-priori SEFDs per station, scan and IF, with a DPFU of 1 and a flat
 gain curve, so `Gustavo.apriori_calibrate!` reads each value as the SEFD. The
 SEFDs come from ngehtsim's weather, receiver and dish tables for the track's
 dates, elevations and frequencies (`python/simulate_antab.py`, run with `uv`).
+`sefd.overrides`, when there are any, go to the script as a TOML file written
+beside the ANTAB file.
 """
 function simulate_antab(cfg::TrackConfig, sefd::SimulatedSEFD; uv = "uv")
     out = simulated_antab(cfg)
     mkpath(dirname(out))
     paths = track_source_paths(cfg.data; skip = cfg.skip_sources)
     stations = join(("$k=$v" for (k, v) in sort(collect(sefd.stations))), ",")
+    receivers = isnothing(sefd.array) ? `--sites $(join(sefd.sites, ","))` : `--array $(sefd.array)`
+    overrides = ``
+    if !isempty(sefd.overrides)
+        file = joinpath(dirname(out), "simulated_overrides.toml")
+        open(io -> TOML.print(io, sefd.overrides), file, "w")
+        overrides = `--overrides $file`
+    end
     script = joinpath(PYTHON_PROJECT, "simulate_antab.py")
-    run(`$uv run --project $PYTHON_PROJECT python $script --out $out --array $(sefd.array) --stations $stations --weather $(sefd.weather) $paths`)
+    run(`$uv run --project $PYTHON_PROJECT python $script --out $out $receivers $overrides --stations $stations --weather $(sefd.weather) $paths`)
     return out
 end
