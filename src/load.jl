@@ -6,7 +6,8 @@ const DERIVED_TAGS = ("+avg", "_corr", "_bpcal")
     track_source_paths(data_dir; skip = String[]) -> Vector{String}
 
 The raw per-source uvfits files under `data_dir`, in name order, leaving out
-the sources named in `skip` (files ending in `_<source>.uvfits`) and files
+the sources named in `skip` (files named `…_<source>.uvfits` or
+`…_<source>.<tag>.uvfits`, such as `.apriori.uvfits`) and files
 whose names mark them as derived (`+avg`, `_corr`, `_bpcal`).
 """
 function track_source_paths(data_dir; skip = String[])
@@ -16,7 +17,7 @@ function track_source_paths(data_dir; skip = String[])
             endswith(p, ".uvfits") || return false
             name = first(splitext(basename(p)))
             any(t -> occursin(t, name), DERIVED_TAGS) && return false
-            return !any(s -> endswith(name, "_" * s), skip)
+            return !any(s -> endswith(name, "_" * s) || occursin("_" * s * ".", name), skip)
         end
     )
     isempty(paths) && error("no raw source uvfits under $data_dir")

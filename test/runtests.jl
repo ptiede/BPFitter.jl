@@ -229,6 +229,9 @@ end
         )
         cfg = read_campaign(path)["T"]
         @test basename.(BPFitter.track_source_paths(cfg.data; skip = cfg.skip_sources)) == ["hops_TEST_SRC.uvfits"]
+        tagged = mkpath(joinpath(dir, "tagged"))
+        foreach(n -> touch(joinpath(tagged, n)), ("hops_T_SRC.apriori.uvfits", "hops_T_SKIPPED.apriori.uvfits"))
+        @test basename.(BPFitter.track_source_paths(tagged; skip = ["SKIPPED"])) == ["hops_T_SRC.apriori.uvfits"]
         track = prepare_track(cfg)
         @test BPFitter.track_sources(track.ps) == ["SRC"]
         @test sort(unique(r.scan for r in track.rows)) == ["SRC_1", "SRC_2"]

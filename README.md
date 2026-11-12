@@ -90,7 +90,8 @@ data/
   averaged the data, e.g., there are 32 EHT IFs (or SPWs or HOPS channels depending on your preferred language)
   The source is the file's object name, and its scans are numbered within the file. Files whose names
   contain `+avg`, `_corr` or `_bpcal` are left out, and so are those ending in
-  `_<source>.uvfits` for a source in `skip_sources`.
+  `_<source>.uvfits` or `_<source>.<tag>.uvfits` (such as `.apriori.uvfits`) for a
+  source in `skip_sources`.
 - A track whose ANTAB file is missing takes the SEFDs `bpfit sefd` simulates,
   written to its `output` folder as `simulated.AN`.
 
