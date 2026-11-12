@@ -264,6 +264,7 @@ Track keys:
 |---|---|
 | `data` | folder of the track's HOPS uvfits, one file per source |
 | `antab` | the track's ANTAB file; when the file is missing, the SEFDs are simulated |
+| `apriori` | `false` takes the uvfits visibilities as already in Jy and reads no ANTAB file (default `true`); `antab` and `quantization_efficiency` may then not be given |
 | `output` | where solutions, tables and plots go |
 | `corrected` | where `apply` writes the corrected uvfits; leave out to write none |
 | `export_name` | name of each corrected file, with `{track}` and `{source}` |

@@ -109,7 +109,11 @@ function inspect_track(io::IO, cfg::TrackConfig)
     ν = XRadio.frequencies(ms)
     @printf(io, "channels: %d, %.4f–%.4f GHz\n", length(ν), minimum(ν) / 1.0e9, maximum(ν) / 1.0e9)
     antab = antab_path(cfg)
-    println(io, "antab:    ", antab, isfile(antab) ? "" : isnothing(cfg.antab) ? "  (missing: run `bpfit sefd`)" : "  (MISSING)")
+    if cfg.apriori
+        println(io, "antab:    ", antab, isfile(antab) ? "" : isnothing(cfg.antab) ? "  (missing: run `bpfit sefd`)" : "  (MISSING)")
+    else
+        println(io, "antab:    none (`apriori = false`: visibilities taken as already in Jy)")
+    end
     overlap = overlapping_sources(rows)
     if !isempty(overlap)
         println(io, "\nsources observed at the same time (skip one of each pair with `skip_sources`):")
@@ -122,7 +126,7 @@ function inspect_track(io::IO, cfg::TrackConfig)
             @printf(io, "  %-4s feed %d  channel %3d  %.2f\n", r.station, r.feed, r.channel, r.ratio)
         end
     end
-    if isfile(antab)
+    if cfg.apriori && isfile(antab)
         XRadio.read_antab!(ps, antab; ifs = channel_ifs(ps))
         odd = sefd_outliers(ps)
         if !isempty(odd)

@@ -24,26 +24,27 @@ function track_source_paths(data_dir; skip = String[])
 end
 
 """
-    load_track(data_dir; skip = String[]) -> ProcessingSet
+    load_track(data_dir; skip = String[], units = "uncalib") -> ProcessingSet
 
 Every raw source file under `data_dir` in one processing set, with its
-visibilities recorded as `uncalib` and each scan named `<source>_<scan>`.
+visibilities recorded in `units` and each scan named `<source>_<scan>`.
 
 Time samples are absolute epochs, so files written against different reference
 dates share one axis. Each file numbers its scans from 1, and a track's scan
 names must be unique, hence the source prefix. HOPS writes `BUNIT = 'JY'` on
 visibilities that are still correlation coefficients; recording them as
-`uncalib` is what lets `apriori_calibrate!` put them in janskys.
+`uncalib` is what lets `apriori_calibrate!` put them in janskys; files that
+are already calibrated take `units = "Jy"`.
 
 The files are read one at a time: reading on several threads is not safe in the
 FITSFiles extension.
 """
-function load_track(data_dir; skip = String[])
+function load_track(data_dir; skip = String[], units = "uncalib")
     paths = track_source_paths(data_dir; skip)
     sets = map(paths) do p
         ps = load_uvfits(p)
         for ms in values(ps)
-            DimensionalData.metadata(ms[:visibility])[:units] = "uncalib"
+            DimensionalData.metadata(ms[:visibility])[:units] = units
             src = source_name(ms)
             ms[:scan_name] = map(n -> "$(src)_$(n)", ms[:scan_name])
         end
@@ -149,10 +150,11 @@ end
     prepare_track(cfg::TrackConfig) -> Track
 
 Load the track's raw uvfits, put them in janskys from the ANTAB file (the
-track's own, or the simulated one), and apply the configured flags.
+track's own, or the simulated one) unless `cfg.apriori` is `false`, and apply
+the configured flags.
 """
 function prepare_track(cfg::TrackConfig)
-    ps = load_track(cfg.data; skip = cfg.skip_sources)
+    ps = load_track(cfg.data; skip = cfg.skip_sources, units = cfg.apriori ? "uncalib" : "Jy")
     origin = track_origin(ps)
     rows = scan_rows(ps, origin)
     overlap = overlapping_sources(rows)
@@ -160,14 +162,16 @@ function prepare_track(cfg::TrackConfig)
         "track $(cfg.name) has sources observed at the same time by two sub-arrays: ",
         join(("$a / $b" for (a, b) in overlap), ", "), "; list one of each pair in `skip_sources`"
     )
-    antab = antab_path(cfg)
-    isfile(antab) || error(
-        isnothing(cfg.antab) ?
-            "track $(cfg.name) has no ANTAB file and no simulated one at $antab; run `bpfit sefd` first" :
-            "no ANTAB file at $antab"
-    )
-    XRadio.read_antab!(ps, antab; ifs = channel_ifs(ps))
-    foreach(ms -> apriori_calibrate!(ms; cfg.quantization_efficiency), values(ps))
+    if cfg.apriori
+        antab = antab_path(cfg)
+        isfile(antab) || error(
+            isnothing(cfg.antab) ?
+                "track $(cfg.name) has no ANTAB file and no simulated one at $antab; run `bpfit sefd` first" :
+                "no ANTAB file at $antab"
+        )
+        XRadio.read_antab!(ps, antab; ifs = channel_ifs(ps))
+        foreach(ms -> apriori_calibrate!(ms; cfg.quantization_efficiency), values(ps))
+    end
     stations = Gustavo.Calibration.DataGeometry(ps).antennas
     for (st, feeds) in cfg.feed_flags, (feed, channels) in feeds
         st in stations && flag_channels!(ps, st, channels; feeds = (feed,))

@@ -52,6 +52,7 @@ function run_command(command, campaign::Campaign, names)
         if command == "inspect"
             inspect_track(stdout, cfg)
         elseif command == "sefd"
+            cfg.apriori || (@info "track $name has `apriori = false`; nothing to simulate"; continue)
             isnothing(cfg.antab) || (@info "track $name has an ANTAB file; nothing to simulate"; continue)
             isnothing(campaign.sefd) && error("$(campaign.path) has no [sefd] table to simulate SEFDs with")
             simulate_antab(cfg, campaign.sefd)
@@ -63,7 +64,7 @@ function run_command(command, campaign::Campaign, names)
         elseif command == "apply"
             export_track(cfg, apply_saved(prepare_track(cfg)))
         elseif command == "run"
-            if isnothing(cfg.antab) && !isfile(simulated_antab(cfg))
+            if cfg.apriori && isnothing(cfg.antab) && !isfile(simulated_antab(cfg))
                 isnothing(campaign.sefd) && error("track $name has no ANTAB file and $(campaign.path) has no [sefd] table")
                 simulate_antab(cfg, campaign.sefd)
             end

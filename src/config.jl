@@ -119,12 +119,16 @@ The settings of one track's reduction, from a campaign file
 Paths:
 - `data`: the folder of the track's HOPS uvfits, one file per source.
 - `antab`: its ANTAB file, or `nothing` when the track has none and takes the
-  SEFDs [`simulate_antab`](@ref) writes to `simulated_antab(cfg)`.
+  SEFDs [`simulate_antab`](@ref) writes to `simulated_antab(cfg)`. Unused when
+  `apriori` is `false`.
 - `output`: where solutions, tables and plots go.
 - `corrected`: where the corrected uvfits go, named by `export_name` with
   `{track}` and `{source}` filled in; `nothing` writes none.
 
 Reduction:
+- `apriori`: whether the visibilities are put in janskys from the ANTAB SEFDs.
+  `false` takes the uvfits visibilities as already in janskys and reads no
+  ANTAB file.
 - `ref_ant`: the station the bandpass gauge is pinned to, or `nothing` for the
   station on the most scans among those without a break.
 - `breaks`: station => hours at which its bandpass is cut, measured from UT
@@ -142,7 +146,7 @@ Reduction:
 - `scan_terms`: station => channel groups over which the final solve fits a
   phase level and a delay per scan beside its bandpass.
 - `quantization_efficiency`: a number, or station => number, for
-  `Gustavo.apriori_calibrate!`.
+  `Gustavo.apriori_calibrate!`; `nothing` when `apriori` is `false`.
 - `priors`: [`BandpassPriors`](@ref).
 - `watch_stations`: stations whose baselines get before/after plots.
 """
@@ -150,6 +154,7 @@ struct TrackConfig{B, Q, P}
     name::String
     data::String
     antab::Union{Nothing, String}
+    apriori::Bool
     output::String
     corrected::Union{Nothing, String}
     export_name::String
@@ -192,7 +197,7 @@ Base.getindex(c::Campaign, name::AbstractString) = haskey(c.tracks, name) ? c.tr
 track_names(c::Campaign) = c.order
 
 const TRACK_KEYS = (
-    "label", "data", "antab", "output", "corrected", "export_name", "ref_ant", "breaks",
+    "label", "data", "antab", "apriori", "output", "corrected", "export_name", "ref_ant", "breaks",
     "feed_flags", "station_flags", "scan_flags", "skip_sources", "apply_only_sources",
     "apply_only_scans", "scan_delays", "scan_terms", "quantization_efficiency", "priors",
     "watch_stations",
@@ -246,9 +251,16 @@ function _track_config(name, t, root)
     output = place(required("output"))
     breaks = _breaks(get(t, "breaks", Dict{String, Any}()))
     priors = BandpassPriors(; _symbol_keys(_check_keys(get(t, "priors", Dict{String, Any}()), ("bandwidth", "phase_sigma", "logamp_sigma"), "priors of track $name"))...)
-    q = get(t, "quantization_efficiency", 1.0)
+    apriori = get(t, "apriori", true)
+    apriori isa Bool || error("track $name: `apriori` must be true or false, not $(repr(apriori))")
+    if !apriori
+        for k in ("antab", "quantization_efficiency")
+            haskey(t, k) && error("track $name sets `apriori = false`, which reads no ANTAB file, and also `$k`; remove one")
+        end
+    end
+    q = apriori ? get(t, "quantization_efficiency", 1.0) : nothing
     return TrackConfig(
-        name, place(required("data")), haskey(t, "antab") ? place(t["antab"]) : nothing, output,
+        name, place(required("data")), haskey(t, "antab") ? place(t["antab"]) : nothing, apriori, output,
         haskey(t, "corrected") ? place(t["corrected"]) : nothing,
         fill_in(get(t, "export_name", "hops_{track}_{source}_bpcal.uvfits")),
         get(t, "ref_ant", nothing),

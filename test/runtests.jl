@@ -245,6 +245,26 @@ end
                 @test all(flagged[Frequency = 2]) == hit_cc
             end
         end
+
+        calibrated = write_campaign(
+            mktempdir(), """
+            [defaults]
+            data = "$(joinpath(dir, "data", "{track}"))"
+            output = "out/{track}"
+            apriori = false
+            skip_sources = ["SKIPPED"]
+            [tracks.T]
+            """
+        )
+        cfg = read_campaign(calibrated)["T"]
+        @test !cfg.apriori && isnothing(cfg.quantization_efficiency)
+        for ms in values(prepare_track(cfg).ps)
+            @test DimensionalData.metadata(ms[:visibility])[:units] == "Jy"
+            @test all(isapprox.(abs.(ms[:visibility]), 1.0; rtol = 1.0e-5))
+        end
+        @test_throws "also `antab`" read_campaign(write_campaign(mktempdir(), "[tracks.A]\ndata = \"d\"\noutput = \"o\"\napriori = false\nantab = \"a.AN\"\n"))
+        @test_throws "also `quantization_efficiency`" read_campaign(write_campaign(mktempdir(), "[tracks.A]\ndata = \"d\"\noutput = \"o\"\napriori = false\nquantization_efficiency = 0.9\n"))
+        @test_throws "must be true or false" read_campaign(write_campaign(mktempdir(), "[tracks.A]\ndata = \"d\"\noutput = \"o\"\napriori = \"no\"\n"))
     end
 
     @testset "SEFD outliers" begin
