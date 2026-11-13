@@ -325,7 +325,12 @@ end
         # With the break the corrected spectra are flat to the noise; without it they are not.
         χ²(s) = (q = BPFitter.scan_chi2(s.chi2); q.chi2 / q.dof)
         @test 0.8 < χ²(solve_track(track; breaks = r.breaks)) < 1.25
-        @test χ²(solve_track(track; breaks = Dict{String, Vector{Float64}}())) > 3
+        unbroken = solve_track(track; breaks = Dict{String, Vector{Float64}}())
+        @test χ²(unbroken) > 3
+        # The solution is plotted with or without breaks; break_delta.txt needs breaks.
+        reports = write_reports(track, unbroken; dir = mktempdir())
+        @test isfile(joinpath(reports, "solution_phase.png")) && isfile(joinpath(reports, "solution_amp.png"))
+        @test !ispath(joinpath(reports, "break_delta.txt"))
 
         # `run` solves with the campaign file's breaks, writes the reports and exports;
         # `apply` writes the same files from the saved solution.
@@ -333,7 +338,7 @@ end
         redirect_stdout(devnull) do
             BPFitter.run_command("run", campaign, ["T"])
         end
-        for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "bandpass.zarr", "scan_delays.zarr")
+        for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "solution_amp.png", "bandpass.zarr", "scan_delays.zarr")
             @test ispath(joinpath(cfg.output, f))
         end
         # The corrected track fits to the noise: one source, no scan or channel edge stands out.

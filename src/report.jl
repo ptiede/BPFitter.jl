@@ -5,8 +5,10 @@ The tables and plots of one solve, under `dir`:
 
 - `timeline.txt`: the scans, the gaps a break could go in, station coverage;
 - `chi2.txt`: the goodness of fit of the a-priori and the corrected data;
-- `break_delta.txt` and `solution_phase.png`/`solution_amp.png`: how each
-  station's bandpass changed across each break;
+- `solution_phase.png`/`solution_amp.png`: the solved bandpass of every
+  station and feed, one trace per interval between breaks;
+- `break_delta.txt` (with breaks): how each station's bandpass changed across
+  each break;
 - `phase_<A>-<B>.png`/`amp_<A>-<B>.png`: scan spectra before and after the
   correction on the busiest baselines of the watched stations, the baselines
   that fit worst after it, and those the bandpass changes most.
@@ -45,6 +47,10 @@ function write_reports(track::Track, s::TrackSolve; dir = track.cfg.output)
     save(joinpath(dir, "chi2_baselines.png"), plot_baselines(baselines))
     save(joinpath(dir, "chi2_sources.png"), plot_source_residuals(normalized_residuals(after), track.rows))
     save(joinpath(dir, "chi2_edges.png"), plot_channel_edges(edges))
+    shape = shape_only(s.sol)
+    for (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
+        save(joinpath(dir, "solution_$(tag).png"), plot_bandpass_solution(shape, boundaries, track.origin; quantity))
+    end
     isempty(boundaries) || write_break_deltas(dir, s, boundaries, track.origin)
     selected = plotted_baselines(track, cfg.watch_stations, baselines)
     for bl in selected, (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
@@ -526,7 +532,7 @@ function segment_picks(times, boundaries, origin)
     hours = track_hours(times, origin)
     picks = [findfirst(h -> edges[k] <= h < edges[k + 1], hours) for k in 1:(length(edges) - 1)]
     labels = [
-        k == 1 ? "< $(edges[2]) h" : k == length(picks) ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
+        length(picks) == 1 ? "whole track" : k == 1 ? "< $(edges[2]) h" : k == length(picks) ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
             for k in eachindex(picks)
     ]
     return picks, labels
@@ -640,14 +646,10 @@ end
 """
     write_break_deltas(dir, s, boundaries, origin)
 
-`break_delta.txt` and the per-segment solution plots: how far each station's
-bandpass moved across each boundary ([`break_changes`](@ref)).
+`break_delta.txt`: how far each station's bandpass moved across each boundary
+([`break_changes`](@ref)).
 """
 function write_break_deltas(dir, s::TrackSolve, boundaries, origin)
-    shape = shape_only(s.sol)
-    for (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
-        save(joinpath(dir, "solution_$(tag).png"), plot_bandpass_solution(shape, boundaries, origin; quantity))
-    end
     edges = vcat(-Inf, collect(boundaries), Inf)
     label(k) = k == 1 ? "< $(edges[2]) h" : k == length(edges) - 1 ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
     open(joinpath(dir, "break_delta.txt"), "w") do io

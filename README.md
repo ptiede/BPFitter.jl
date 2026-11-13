@@ -102,7 +102,8 @@ bpfit/track1/                     # output = "bpfit/{track}"
   chi2.txt  chi2_*.png            # fit tables and plots (solve)
   timeline.txt
   phase_<A>-<B>.png  amp_<A>-<B>.png
-  solution_phase.png  solution_amp.png  break_delta.txt     # with breaks
+  solution_phase.png  solution_amp.png
+  break_delta.txt                                           # with breaks
   bandpass.zarr  scan_delays.zarr # solutions, read by apply
   break_suggestions/              # breaks: suggestions.txt and a plot per step
   simulated.AN                    # sefd
@@ -245,7 +246,7 @@ and 6 for every track.
 | `chi2_edges.png` | the scan-to-scan spread of the phase step at each channel edge of each baseline; the title names any station whose baselines share edges |
 | `timeline.txt` | every scan with its source, time span and stations, and the gaps a break could go in |
 | `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations`, the four baselines that fit worst after it, and the two the solved bandpass changes most |
-| `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per segment (with breaks) |
+| `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per interval between breaks |
 | `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
 | `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads |
 
