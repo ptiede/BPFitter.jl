@@ -41,6 +41,7 @@ bpfit sefd    campaign.toml            # simulate ANTAB files for tracks that ha
 bpfit breaks  campaign.toml            # suggest bandpass breaks; writes a table and plots for review
 bpfit solve   campaign.toml            # solve; writes solutions, χ² tables and plots
 bpfit apply   campaign.toml            # write corrected uvfits from the saved solutions
+bpfit plot    campaign.toml            # redraw the solution and delay plots from the saved solutions
 bpfit run     campaign.toml [track…]   # sefd where needed, solve, apply, per track
 ```
 Each command runs on the named tracks, or on all of them, one after another in
@@ -104,6 +105,7 @@ bpfit/track1/                     # output = "bpfit/{track}"
   phase_<A>-<B>.png  amp_<A>-<B>.png
   solution_phase.png  solution_amp.png
   break_delta.txt                                           # with breaks
+  scan_delays.png                 # with scan_delays
   bandpass.zarr  scan_delays.zarr # solutions, read by apply
   break_suggestions/              # breaks: suggestions.txt and a plot per step
   simulated.AN                    # sefd
@@ -248,7 +250,8 @@ and 6 for every track.
 | `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations`, the four baselines that fit worst after it, and the two the solved bandpass changes most |
 | `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per interval between breaks |
 | `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
-| `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads |
+| `scan_delays.png` | each station's per-scan delay of each feed, feed 2 − feed 1 delay offset and rate against time, colored by source, on the scans where the feeds involved have fringe detections (with `scan_delays`) |
+| `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads and `bpfit plot` redraws `solution_*.png` and `scan_delays.png` from (with the campaign file's breaks) |
 
 `breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`
 (and `simulated_overrides.toml` when `[sefd]` has overrides).

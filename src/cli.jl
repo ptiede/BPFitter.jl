@@ -11,6 +11,9 @@ Every command runs on the named tracks, or on all the campaign's tracks.
   solve     solve with the campaign file's breaks; writes solutions, tables
             and plots
   apply     write corrected uvfits from the solutions `solve` saved
+  plot      redraw the solution plots from the solutions `solve` saved:
+            solution_phase.png and solution_amp.png with the campaign file's
+            breaks, and scan_delays.png
   run       sefd where needed, solve, apply
 """
 
@@ -33,6 +36,29 @@ function apply_saved(track::Track)
     isempty(rest) || calibrate!(shape_only(sol), rest)
     model = track_bandpass_model(track.cfg.breaks, track.origin, track.cfg.priors)
     return TrackSolve(model, track.cfg.breaks, something(track.cfg.ref_ant, ""), sol, delays, corrected, track_tss(filter(keep, corrected)))
+end
+
+"""
+    plot_saved(track) -> Vector{String}
+
+The solution plots of the solve `solve` saved under the track's output folder:
+`solution_phase.png` and `solution_amp.png`, with the track's configured
+breaks, and `scan_delays.png` when per-scan delays were saved. Returns the paths
+written.
+"""
+function plot_saved(track::Track)
+    dir = track.cfg.output
+    bandpass = joinpath(dir, "bandpass.zarr")
+    isdir(bandpass) || error("no saved bandpass at $bandpass; run `bpfit solve` first")
+    out = String[]
+    write_solution_plots(dir, shape_only(load_solution(bandpass)), track.cfg.breaks, track.origin)
+    append!(out, joinpath.(dir, ("solution_phase.png", "solution_amp.png")))
+    delays = joinpath(dir, "scan_delays.zarr")
+    if isdir(delays)
+        push!(out, joinpath(dir, "scan_delays.png"))
+        save(last(out), plot_scan_delays(load_solution(delays), track.rows, track.origin))
+    end
+    return out
 end
 
 function solve_and_report(track; breaks = track.cfg.breaks)
@@ -63,6 +89,8 @@ function run_command(command, campaign::Campaign, names)
             solve_and_report(prepare_track(cfg))
         elseif command == "apply"
             export_track(cfg, apply_saved(prepare_track(cfg)))
+        elseif command == "plot"
+            foreach(out -> @info("wrote", out), plot_saved(prepare_track(cfg)))
         elseif command == "run"
             if cfg.apriori && isnothing(cfg.antab) && !isfile(simulated_antab(cfg))
                 isnothing(campaign.sefd) && error("track $name has no ANTAB file and $(campaign.path) has no [sefd] table")

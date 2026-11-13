@@ -326,6 +326,10 @@ end
         χ²(s) = (q = BPFitter.scan_chi2(s.chi2); q.chi2 / q.dof)
         @test 0.8 < χ²(solve_track(track; breaks = r.breaks)) < 1.25
         unbroken = solve_track(track; breaks = Dict{String, Vector{Float64}}())
+        # The feeds each station was detected on travel with the delay solution.
+        info = unbroken.delays.info
+        @test sort(unique(info.detected_station)) == sort(STEP_STATIONS)
+        @test size(info.detected_feeds, 2) == 2 && all(==(1), info.detected_feeds)
         @test χ²(unbroken) > 3
         # The solution is plotted with or without breaks; break_delta.txt needs breaks.
         reports = write_reports(track, unbroken; dir = mktempdir())
@@ -338,9 +342,16 @@ end
         redirect_stdout(devnull) do
             BPFitter.run_command("run", campaign, ["T"])
         end
-        for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "solution_amp.png", "bandpass.zarr", "scan_delays.zarr")
+        for f in ("chi2.txt", "timeline.txt", "break_delta.txt", "solution_phase.png", "solution_amp.png", "scan_delays.png", "bandpass.zarr", "scan_delays.zarr")
             @test ispath(joinpath(cfg.output, f))
         end
+        # `plot` redraws the solution and delay plots from the saved solutions.
+        plots = joinpath.(cfg.output, ("solution_phase.png", "solution_amp.png", "scan_delays.png"))
+        foreach(rm, plots)
+        redirect_stdout(devnull) do
+            BPFitter.run_command("plot", campaign, ["T"])
+        end
+        @test all(isfile, plots)
         # The corrected track fits to the noise: one source, no scan or channel edge stands out.
         chi2 = read(joinpath(cfg.output, "chi2.txt"), String)
         @test occursin(r"SRC +12 ", chi2)
@@ -353,6 +364,19 @@ end
             BPFitter.run_command("apply", campaign, ["T"])
         end
         @test 0.8 < BPFitter.scan_chi2(BPFitter.track_tss(load_uvfits(exported))) |> (q -> q.chi2 / q.dof) < 1.25
+    end
+
+    @testset "scan detections" begin
+        pairs_ = [("AP", "AZ"), ("AP", "JC"), ("AZ", "JC")]
+        feeds = [(1, 1), (1, 2), (2, 1), (2, 2)]
+        pfa = Float32[3.3e-11 1.0 1.0 4.7e-15; 4.7e-4 1.0 1.0 1.0; 1.7e-34 1.0 1.0 1.0]
+        valid = trues(3, 4)
+        layers = (; pfa, valid)
+        s = DimStack(map(l -> DimArray(l, (AntennaPair(pairs_), FeedPair(feeds))), layers); metadata = (; scan = "X_1"))
+        d = BPFitter.scan_detections([s])
+        # AP–AZ is detected on both feeds, AZ–JC on feed 1; AP–JC is above the threshold.
+        @test d.station == ["AP", "AZ", "JC"] && all(==("X_1"), d.scan)
+        @test d.feeds == [1 1; 1 1; 1 0]
     end
 
     @testset "dead channels" begin

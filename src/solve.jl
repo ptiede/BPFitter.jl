@@ -58,12 +58,54 @@ function reference_antenna(track::Track, breaks)
 end
 
 # The bandpass is applied scan by scan, so only one scan's corrected copy exists
-# at a time.
+# at a time. Which feeds of each station the fringe searches detected
+# ([`scan_detections`](@ref)) goes into the solution's `info`, which is saved
+# with it.
 function fit_scan_delays(sol, ps)
-    return fit(
-        FringeClosure(; model = scan_delay_model()),
-        reduce(vcat, values(mapsets(g -> fit(FringeSearch(), calibrate(sol, g)), groupby(ps, ByScan())))),
-    )
+    searches = reduce(vcat, values(mapsets(g -> fit(FringeSearch(), calibrate(sol, g)), groupby(ps, ByScan()))))
+    delays = fit(FringeClosure(; model = scan_delay_model()), searches)
+    found = scan_detections(searches)
+    info = merge(delays.info, (; detected_station = found.station, detected_scan = found.scan, detected_feeds = found.feeds))
+    return CalibrationSolution(delays.geom, delays.name, delays.components, info; spec = delays.spec)
+end
+
+# The detection threshold of `FringeClosure`'s default `Stationization`: cells
+# above it carry a thousandfold σ in the closure and barely enter the fit.
+const DETECTION_PFA = 1.0e-4
+
+"""
+    scan_detections(searches) -> NamedTuple
+
+Which feeds of each station have a fringe detection in each scan, from the
+fringe searches of [`fit_scan_delays`](@ref): a cell (`valid`,
+`pfa ≤ $(DETECTION_PFA)`) on baseline `a`–`b`, feeds `fa`–`fb`, counts for feed
+`fa` of `a` and feed `fb` of `b`. One entry per station and scan: `station`,
+`scan` and `feeds`, a matrix with one row per entry and one column per feed,
+1 where the feed has a detection and 0 where it has none.
+"""
+function scan_detections(searches)
+    station, scan, seen = String[], String[], Vector{Int}[]
+    for s in searches
+        m = DimensionalData.metadata(s)
+        pairs_ = collect(lookup(s, :AntennaPair))
+        feeds = collect(lookup(s, :FeedPair))
+        names = sort!(unique(reduce(vcat, [[a, b] for (a, b) in pairs_]; init = String[])))
+        nfeed = maximum(max(fa, fb) for (fa, fb) in feeds)
+        idx = Dict(n => i for (i, n) in pairs(names))
+        found = zeros(Int, length(names), nfeed)
+        valid, pfa = parent(s[:valid]), parent(s[:pfa])
+        for (i, (a, b)) in pairs(pairs_), (j, (fa, fb)) in pairs(feeds)
+            valid[i, j] && pfa[i, j] <= DETECTION_PFA || continue
+            found[idx[a], fa] = found[idx[b], fb] = 1
+        end
+        for (k, n) in pairs(names)
+            push!(station, n)
+            push!(scan, String(m.scan))
+            push!(seen, found[k, :])
+        end
+    end
+    nfeed = maximum(length, seen; init = 0)
+    return (; station, scan, feeds = [f <= length(x) ? x[f] : 0 for x in seen, f in 1:nfeed])
 end
 
 """
