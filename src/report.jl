@@ -5,8 +5,12 @@ The tables and plots of one solve, under `dir`:
 
 - `timeline.txt`: the scans, the gaps a break could go in, station coverage;
 - `chi2.txt`: the goodness of fit of the a-priori and the corrected data;
-- `break_delta.txt` and `solution_phase.png`/`solution_amp.png`: how each
-  station's bandpass changed across each break;
+- `solution_phase.png`/`solution_amp.png`: the solved bandpass of every
+  station and feed, one trace per interval between breaks;
+- `break_delta.txt` (with breaks): how each station's bandpass changed across
+  each break;
+- `scan_delays.png` (with `scan_delays`): the per-scan delays, feed delay
+  offsets and rates ([`plot_scan_delays`](@ref));
 - `phase_<A>-<B>.png`/`amp_<A>-<B>.png`: scan spectra before and after the
   correction on the busiest baselines of the watched stations, the baselines
   that fit worst after it, and those the bandpass changes most.
@@ -45,7 +49,9 @@ function write_reports(track::Track, s::TrackSolve; dir = track.cfg.output)
     save(joinpath(dir, "chi2_baselines.png"), plot_baselines(baselines))
     save(joinpath(dir, "chi2_sources.png"), plot_source_residuals(normalized_residuals(after), track.rows))
     save(joinpath(dir, "chi2_edges.png"), plot_channel_edges(edges))
+    write_solution_plots(dir, shape_only(s.sol), s.breaks, track.origin)
     isempty(boundaries) || write_break_deltas(dir, s, boundaries, track.origin)
+    isnothing(s.delays) || save(joinpath(dir, "scan_delays.png"), plot_scan_delays(s.delays, track.rows, track.origin))
     selected = plotted_baselines(track, cfg.watch_stations, baselines)
     for bl in selected, (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
         save(joinpath(dir, "$(tag)_$(join(bl, "-")).png"), plot_stability(before, after, bl, track.origin; quantity))
@@ -526,7 +532,7 @@ function segment_picks(times, boundaries, origin)
     hours = track_hours(times, origin)
     picks = [findfirst(h -> edges[k] <= h < edges[k + 1], hours) for k in 1:(length(edges) - 1)]
     labels = [
-        k == 1 ? "< $(edges[2]) h" : k == length(picks) ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
+        length(picks) == 1 ? "whole track" : k == 1 ? "< $(edges[2]) h" : k == length(picks) ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
             for k in eachindex(picks)
     ]
     return picks, labels
@@ -638,16 +644,96 @@ function _feed_change(dp, da, ν)
 end
 
 """
-    write_break_deltas(dir, s, boundaries, origin)
+    write_solution_plots(dir, shape, breaks, origin)
 
-`break_delta.txt` and the per-segment solution plots: how far each station's
-bandpass moved across each boundary ([`break_changes`](@ref)).
+`solution_phase.png` and `solution_amp.png` under `dir`: the bandpass `shape`
+(a solution's shape, [`shape_only`](@ref)) with one trace per interval between
+the `breaks` (station => hours since `origin`).
 """
-function write_break_deltas(dir, s::TrackSolve, boundaries, origin)
-    shape = shape_only(s.sol)
+function write_solution_plots(dir, shape, breaks, origin)
+    boundaries = sort!(unique(reduce(vcat, values(breaks); init = Float64[])))
     for (quantity, tag) in ((:phase, "phase"), (:amplitude, "amp"))
         save(joinpath(dir, "solution_$(tag).png"), plot_bandpass_solution(shape, boundaries, origin; quantity))
     end
+    return nothing
+end
+
+"""
+    plot_scan_delays(delays, rows, origin) -> Figure
+
+The per-scan terms of a [`scan_delay_model`](@ref) solution against time, one
+row per station: the delay of each feed (the shared delay, plus the feed's
+offset for feeds after the first), each such feed's offset from the first, and
+the rate, colored by source. `rows` are the track's [`scan_rows`](@ref) and
+`origin` their time origin.
+
+A value is plotted only where the data constrain it, by the detections
+[`scan_detections`](@ref) stored in the solution's `info`: a feed's delay on the
+scans where that feed has a detection, an offset where both feeds do, and the
+rate where the station has any. Elsewhere the fit sets the term from its prior
+alone (for a station with one feed, it splits that feed's delay between the
+shared delay and the offset). A station with no detection in any scan is left
+out.
+"""
+function plot_scan_delays(delays, rows, origin)
+    haskey(delays.info, :detected_station) || error(
+        "this delay solution does not record which feeds were detected; it was saved by an older BPFitter, so run `bpfit solve` again"
+    )
+    terms = Dict(c.path[end] => c.params for c in delays.components)
+    mbd, rel, rate = terms[:mbd], terms[:rel_delay], terms[:rate]
+    series(p, a) = vec(parent(p[AntennaName = At(a)]))
+    times = collect(lookup(mbd, Ti))
+    for p in (mbd, rel, rate)
+        length(series(p, first(lookup(p, AntennaName)))) == length(times) ||
+            error("expected one value per station and scan; got parameters of size $(size(p))")
+    end
+    hours = track_hours(times, origin)
+    scan_row = map(hours) do h
+        i = findfirst(r -> r.t0 <= h <= r.t1, rows)
+        isnothing(i) && error("no scan of the track contains the delay solution at $(round(h; digits = 3)) h")
+        rows[i]
+    end
+    info = delays.info
+    entry = Dict((info.detected_station[k], info.detected_scan[k]) => k for k in eachindex(info.detected_station))
+    function detected(a, i, f)
+        k = get(entry, (String(a), scan_row[i].scan), nothing)
+        return !isnothing(k) && f <= size(info.detected_feeds, 2) && info.detected_feeds[k, f] == 1
+    end
+    # Feed 2's delay is the shared delay plus its offset.
+    panels = (
+        ("feed 1 delay (ps)", (a, i) -> series(mbd, a)[i], (a, i) -> detected(a, i, 1), 1.0e12),
+        ("feed 2 delay (ps)", (a, i) -> series(mbd, a)[i] + series(rel, a)[i], (a, i) -> detected(a, i, 2), 1.0e12),
+        ("feed 2 − feed 1 delay (ps)", (a, i) -> series(rel, a)[i], (a, i) -> detected(a, i, 1) && detected(a, i, 2), 1.0e12),
+        ("rate (mHz)", (a, i) -> series(rate, a)[i], (a, i) -> detected(a, i, 1) || detected(a, i, 2), 1.0e3),
+    )
+    stations = [String(a) for a in lookup(mbd, AntennaName) if any(i -> detected(a, i, 1) || detected(a, i, 2), eachindex(hours))]
+    isempty(stations) && error("no station has a detection in any scan")
+    sources = sort!(unique(r.source for r in scan_row))
+    palette = Makie.wong_colors()
+    color = Dict(s => palette[mod1(i, length(palette))] for (i, s) in pairs(sources))
+    fig = Figure(size = (1900, 170 * length(stations) + 120))
+    for (row, a) in pairs(stations), (col, (label, value, constrained, scale)) in pairs(panels)
+        ax = Axis(
+            fig[row, col]; ylabel = col == 1 ? a : "", title = row == 1 ? label : "",
+            xlabel = row == length(stations) ? "hours since UT midnight" : "",
+        )
+        hlines!(ax, 0; color = :gray70)
+        for s in sources
+            k = findall(i -> scan_row[i].source == s && constrained(a, i), eachindex(hours))
+            isempty(k) || scatter!(ax, hours[k], scale .* [value(a, i) for i in k]; color = color[s], markersize = 7)
+        end
+    end
+    Legend(fig[0, 1:length(panels)], [MarkerElement(; color = color[s], marker = :circle) for s in sources], sources; orientation = :horizontal, framevisible = false)
+    return fig
+end
+
+"""
+    write_break_deltas(dir, s, boundaries, origin)
+
+`break_delta.txt`: how far each station's bandpass moved across each boundary
+([`break_changes`](@ref)).
+"""
+function write_break_deltas(dir, s::TrackSolve, boundaries, origin)
     edges = vcat(-Inf, collect(boundaries), Inf)
     label(k) = k == 1 ? "< $(edges[2]) h" : k == length(edges) - 1 ? "≥ $(edges[k]) h" : "$(edges[k])–$(edges[k + 1]) h"
     open(joinpath(dir, "break_delta.txt"), "w") do io

@@ -41,6 +41,7 @@ bpfit sefd    campaign.toml            # simulate ANTAB files for tracks that ha
 bpfit breaks  campaign.toml            # suggest bandpass breaks; writes a table and plots for review
 bpfit solve   campaign.toml            # solve; writes solutions, χ² tables and plots
 bpfit apply   campaign.toml            # write corrected uvfits from the saved solutions
+bpfit plot    campaign.toml            # redraw the solution and delay plots from the saved solutions
 bpfit run     campaign.toml [track…]   # sefd where needed, solve, apply, per track
 ```
 Each command runs on the named tracks, or on all of them, one after another in
@@ -90,7 +91,8 @@ data/
   averaged the data, e.g., there are 32 EHT IFs (or SPWs or HOPS channels depending on your preferred language)
   The source is the file's object name, and its scans are numbered within the file. Files whose names
   contain `+avg`, `_corr` or `_bpcal` are left out, and so are those ending in
-  `_<source>.uvfits` for a source in `skip_sources`.
+  `_<source>.uvfits` or `_<source>.<tag>.uvfits` (such as `.apriori.uvfits`) for a
+  source in `skip_sources`.
 - A track whose ANTAB file is missing takes the SEFDs `bpfit sefd` simulates,
   written to its `output` folder as `simulated.AN`.
 
@@ -101,7 +103,9 @@ bpfit/track1/                     # output = "bpfit/{track}"
   chi2.txt  chi2_*.png            # fit tables and plots (solve)
   timeline.txt
   phase_<A>-<B>.png  amp_<A>-<B>.png
-  solution_phase.png  solution_amp.png  break_delta.txt     # with breaks
+  solution_phase.png  solution_amp.png
+  break_delta.txt                                           # with breaks
+  scan_delays.png                 # with scan_delays
   bandpass.zarr  scan_delays.zarr # solutions, read by apply
   break_suggestions/              # breaks: suggestions.txt and a plot per step
   simulated.AN                    # sefd
@@ -244,9 +248,10 @@ and 6 for every track.
 | `chi2_edges.png` | the scan-to-scan spread of the phase step at each channel edge of each baseline; the title names any station whose baselines share edges |
 | `timeline.txt` | every scan with its source, time span and stations, and the gaps a break could go in |
 | `phase_<A>-<B>.png`, `amp_<A>-<B>.png` | each scan's spectrum on one baseline before and after the correction, for the busiest baselines of `watch_stations`, the four baselines that fit worst after it, and the two the solved bandpass changes most |
-| `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per segment (with breaks) |
+| `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per interval between breaks |
 | `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
-| `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads |
+| `scan_delays.png` | each station's per-scan delay of each feed, feed 2 − feed 1 delay offset and rate against time, colored by source, on the scans where the feeds involved have fringe detections (with `scan_delays`) |
+| `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads and `bpfit plot` redraws `solution_*.png` and `scan_delays.png` from (with the campaign file's breaks) |
 
 `breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`
 (and `simulated_overrides.toml` when `[sefd]` has overrides).
@@ -264,6 +269,7 @@ Track keys:
 |---|---|
 | `data` | folder of the track's HOPS uvfits, one file per source |
 | `antab` | the track's ANTAB file; when the file is missing, the SEFDs are simulated |
+| `apriori` | `false` takes the uvfits visibilities as already in Jy and reads no ANTAB file (default `true`); `antab` and `quantization_efficiency` may then not be given |
 | `output` | where solutions, tables and plots go |
 | `corrected` | where `apply` writes the corrected uvfits; leave out to write none |
 | `export_name` | name of each corrected file, with `{track}` and `{source}` |

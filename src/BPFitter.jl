@@ -25,7 +25,7 @@ using TOML
 
 export read_campaign, Campaign, TrackConfig, BreakSearch, BandpassPriors, SimulatedSEFD
 export prepare_track, Track, solve_track, TrackSolve, find_breaks, BreakSearchResult, BreakTest, BreakChange, break_changes
-export write_suggestions, write_reports, save_solve, export_track, apply_saved, simulate_antab
+export write_suggestions, write_reports, plot_scan_delays, save_solve, export_track, apply_saved, simulate_antab
 export inspect_track, dead_channels, sefd_outliers, track_bandpass_model, with_scan_terms, scan_delay_model
 
 include("config.jl")
