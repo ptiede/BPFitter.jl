@@ -288,7 +288,7 @@ function _window(w, where)
     return (Float64(w[1]), Float64(w[2]))
 end
 
-_breaks(tbl) =Dict{String, Vector{Float64}}(String(st) => sort!(Float64.(hrs)) for (st, hrs) in tbl if !isempty(hrs))
+_breaks(tbl) = Dict{String, Vector{Float64}}(String(st) => sort!(Float64.(hrs)) for (st, hrs) in tbl if !isempty(hrs))
 
 """
     with_breaks(cfg, breaks) -> TrackConfig
