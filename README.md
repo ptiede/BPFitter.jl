@@ -273,6 +273,7 @@ Track keys:
 | `feed_flags` | station => feed => channels to flag on that feed |
 | `station_flags` | station => channels to flag on every feed |
 | `scan_flags` | list of `{ stations, scan }`: one station flags all its baselines in the scan, two flag the baseline between them |
+| `time_flags` | station => `[first, last]` windows in hours, measured as `breaks` are, in which all its baselines are flagged; a window holding none of the station's samples is an error |
 | `skip_sources` | sources left out of the track |
 | `apply_only_sources`, `apply_only_scans` | left out of the solve, but corrected with the solved bandpass and exported |
 | `scan_delays` | fit a delay per station and scan between two bandpass solves (default `true`) |

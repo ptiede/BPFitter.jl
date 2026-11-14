@@ -132,6 +132,32 @@ function flag_scan!(ps, stations, scan::AbstractString)
 end
 
 """
+    flag_times!(ps, station, windows, origin) -> ps
+
+Flag every channel and product of `station`'s baselines at the times inside
+`windows`, `(first, last)` pairs of hours since `origin`. A window that holds
+none of the station's samples is an error.
+"""
+function flag_times!(ps, station::AbstractString, windows, origin)
+    hit = falses(length(windows))
+    for ms in values(ps)
+        hours = track_hours(XRadio.times(ms), origin)
+        F = XRadio.flags(ms)
+        for (bi, (a, b)) in pairs(XRadio.baselines(ms))
+            (a == b || station ∉ (String(a), String(b))) && continue
+            for (w, (h0, h1)) in pairs(windows)
+                rows = findall(h -> h0 <= h <= h1, hours)
+                isempty(rows) && continue
+                hit[w] = true
+                view(F, Ti(rows), BaselineID(bi)) .= true
+            end
+        end
+    end
+    all(hit) || error("time_flags windows $(windows[.!hit]) hold no samples of $station")
+    return ps
+end
+
+"""
     Track
 
 One track loaded and prepared for the solve: the processing set `ps` with its
@@ -177,6 +203,9 @@ function prepare_track(cfg::TrackConfig)
     end
     for (sts, scan) in cfg.scan_flags
         flag_scan!(ps, sts, scan)
+    end
+    for (st, windows) in cfg.time_flags
+        flag_times!(ps, st, windows, origin)
     end
     return Track(cfg, ps, origin, rows)
 end
