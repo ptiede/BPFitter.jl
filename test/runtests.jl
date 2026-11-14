@@ -133,6 +133,7 @@ end
             [tracks.B]
             station_flags = { ST = [1, 7, 8] }
             scan_flags = [{ stations = ["ST", "SP"], scan = "X_1" }]
+            time_flags = { ST = [[2.5, 2.6], [3, 3.1]] }
             apply_only_sources = ["VARIABLE"]
             """
         )
@@ -148,6 +149,8 @@ end
         @test b.station_flags == Dict("ST" => [1, 7, 8])
         @test a.feed_flags == Dict("SG" => Dict(1 => [30, 31]))
         @test b.scan_flags == [(["ST", "SP"], "X_1")]
+        @test b.time_flags == Dict("ST" => [(2.5, 2.6), (3.0, 3.1)])
+        @test isempty(a.time_flags)
         @test b.apply_only_sources == ["VARIABLE"]
         @test c.search.alpha == 1.0e-4
         @test c.search.min_F == 40.0 && c.search.min_shape_deg == 2.0 && c.search.min_scatter_percent == 5.0 && c.search.tries == 4
@@ -155,15 +158,19 @@ end
         @test c.sefd.array == "ARRAY"
         @test isempty(c.sefd.sites) && isempty(c.sefd.overrides)
 
-        listed = read_campaign(write_campaign(mktempdir(), """
-            [sefd]
-            sites = ["ALMA", "KP"]
-            stations = { AA = "ALMA", KT = "KP" }
-            T_R_overrides = { KP = { Band6 = 60.0 } }
-            [tracks.A]
-            data = "d"
-            output = "o"
-            """))
+        listed = read_campaign(
+            write_campaign(
+                mktempdir(), """
+                [sefd]
+                sites = ["ALMA", "KP"]
+                stations = { AA = "ALMA", KT = "KP" }
+                T_R_overrides = { KP = { Band6 = 60.0 } }
+                [tracks.A]
+                data = "d"
+                output = "o"
+                """
+            )
+        )
         @test isnothing(listed.sefd.array)
         @test listed.sefd.sites == ["ALMA", "KP"]
         @test listed.sefd.overrides == Dict("T_R_overrides" => Dict("KP" => Dict("Band6" => 60.0)))
@@ -177,6 +184,8 @@ end
         @test_throws "unknown key(s) [\"ouptut\"]" read_campaign(bad)
         missing_output = write_campaign(mktempdir(), "[tracks.A]\ndata = \"d\"\n")
         @test_throws "track A has no `output`" read_campaign(missing_output)
+        reversed = write_campaign(mktempdir(), "[tracks.A]\ndata = \"d\"\noutput = \"o\"\ntime_flags = { ST = [[3.1, 3.0]] }\n")
+        @test_throws "time_flags.ST of track A: a window must be [first, last] hours" read_campaign(reversed)
 
         mkpath(joinpath(dir, "out", "B"))
         write(joinpath(dir, "out", "B", "breaks.toml"), "[breaks]\nST = [20.5]\n")
@@ -248,6 +257,22 @@ end
                 @test all(flagged[Frequency = 2]) == hit_cc
             end
         end
+
+        first_hour = track.rows[1].t0
+        BPFitter.flag_times!(track.ps, "BB", [(first_hour - 1.0e-6, first_hour + 1.0e-6)], track.origin)
+        for ms in values(track.ps)
+            hours = track_hours(XRadio.times(ms), track.origin)
+            at_first = findall(h -> abs(h - first_hour) <= 1.0e-6, hours)
+            later = findall(>(first_hour + 1.0e-6), hours)
+            F = XRadio.flags(ms)
+            for (bi, (a, b)) in pairs(XRadio.baselines(ms))
+                (a == b || "CC" in (String(a), String(b))) && continue
+                hit_bb = "BB" in (String(a), String(b))
+                isempty(at_first) || @test all(F[Ti(at_first), BaselineID(bi)]) == hit_bb
+                @test !any(F[Ti(later), BaselineID(bi)])
+            end
+        end
+        @test_throws "hold no samples of BB" BPFitter.flag_times!(track.ps, "BB", [(100.0, 101.0)], track.origin)
 
         calibrated = write_campaign(
             mktempdir(), """

@@ -44,6 +44,7 @@ name = "bpfitter-sefd"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "astropy" },
     { name = "ngehtsim" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -51,6 +52,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "astropy" },
     { name = "ngehtsim", git = "https://github.com/Smithsonian/ngehtsim?rev=833035f4f1c72842190f7f19a58a5d8a055c12bd" },
     { name = "numpy" },
 ]

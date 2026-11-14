@@ -17,7 +17,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 XRadio = "8f21e5d1-474f-4c64-bef4-ed78edb0e816"
 
 [sources]
-FITSFiles = {rev = "ptiede-uvfixes", url = "https://github.com/ptiede/FITSFiles.jl"}
+FITSFiles = {rev = "ptiede-uvfixes-rebased", url = "https://github.com/ptiede/FITSFiles.jl"}
 Gustavo = {rev = "main", url = "https://github.com/ptiede/Gustavo.jl"}
 XRadio = {rev = "main", url = "https://github.com/JuliaAstro/XRadio.jl"}
 

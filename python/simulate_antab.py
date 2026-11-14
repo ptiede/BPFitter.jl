@@ -32,11 +32,11 @@ import datetime
 import tomllib
 
 import numpy as np
+from astropy.io import fits
 
 import ngehtsim.const_def as const
 from ngehtsim.obs.obs_generator import obs_generator, windspeed_SEFD_modification
 from ngehtsim.obs.observation_geometry import station_geometry_from_rows
-from ngehtsim.obs.observation_template import ObservationTemplate
 
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 MJD_UNIX_ZERO = 40587.0
@@ -67,23 +67,54 @@ def scans(time_mjd, gap_seconds=59.4):
     return np.split(order, cuts)
 
 
+def read_rows(path):
+    """The row times (MJD) and antenna indices of a HOPS uvfits, its AN table's names and
+    positions, its IF frequencies and channel width (Hz), and its pointing (RA hours, Dec
+    degrees). Only the header, the random parameters and the AN and FQ tables are read."""
+    with fits.open(path, memmap=True) as hdul:
+        header = hdul[0].header
+        group = hdul[0].data
+        time_mjd = np.asarray(group.par("DATE"), dtype=float) - 2400000.5
+        codes = np.rint(np.asarray(group.par("BASELINE"), dtype=float)).astype(int)
+
+        an = hdul["AIPS AN"].data
+        names = [str(name).strip() for name in an["ANNAME"]]
+        numbers = np.asarray(an["NOSTA"], dtype=int)
+        lookup = np.full(max(numbers.max(), codes.max() // 256) + 1, -1)
+        lookup[numbers] = np.arange(len(numbers))
+        antenna1, antenna2 = lookup[codes // 256], lookup[codes % 256]
+        if np.any(antenna1 < 0) or np.any(antenna2 < 0):
+            raise ValueError(f"{path}: a BASELINE refers to an antenna missing from the AN table")
+
+        axis = next(k for k in range(2, header["NAXIS"] + 1) if str(header[f"CTYPE{k}"]).strip() == "FREQ")
+        if header[f"NAXIS{axis}"] != 1:
+            raise ValueError(f"{path}: expected one channel per IF, got {header[f'NAXIS{axis}']}")
+        reference = header[f"CRVAL{axis}"] + (1.0 - header[f"CRPIX{axis}"]) * header[f"CDELT{axis}"]
+        fq = hdul["AIPS FQ"].data
+        freqs = reference + np.asarray(fq["IF FREQ"][0], dtype=float).reshape(-1)
+        width = abs(float(np.asarray(fq["CH WIDTH"][0], dtype=float).reshape(-1)[0]))
+
+        return (
+            time_mjd, antenna1, antenna2, names, np.asarray(an["STABXYZ"], dtype=float),
+            freqs, width, float(header["OBSRA"]) / 15.0, float(header["OBSDEC"]),
+        )
+
+
 def station_samples(path, stations):
     """Per station: (time_mjd, elevation_rad) of every row it is on, and the file's IF frequencies."""
-    ds = ObservationTemplate.from_uvfits(path).dataset
-    geom = station_geometry_from_rows(
-        ds.stations.position_itrs_m, ds.time_mjd, ds.antenna1, ds.antenna2, ds.ra_hours, ds.dec_degrees
-    )
+    time_mjd, antenna1, antenna2, names, positions, freqs, width, ra, dec = read_rows(path)
+    geom = station_geometry_from_rows(positions, time_mjd, antenna1, antenna2, ra, dec)
     if geom is None:
         raise ValueError(f"{path}: a station has no position in the antenna table")
     out = {}
-    for i, name in enumerate(ds.stations.names):
+    for i, name in enumerate(names):
         if name not in stations:
             raise ValueError(f"{path}: station {name} has no ngehtsim site in --stations")
-        first, second = ds.antenna1 == i, ds.antenna2 == i
-        t = np.concatenate((ds.time_mjd[first], ds.time_mjd[second]))
+        first, second = antenna1 == i, antenna2 == i
+        t = np.concatenate((time_mjd[first], time_mjd[second]))
         el = np.concatenate((geom.elevation1_rad[first], geom.elevation2_rad[second]))
         out[name] = (t, el)
-    return out, np.asarray(ds.channel_frequency_hz), float(ds.channel_bandwidth_hz[0]), ds.ra_hours, ds.dec_degrees
+    return out, freqs, width, ra, dec
 
 
 def read_overrides(path):

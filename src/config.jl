@@ -138,6 +138,8 @@ Reduction:
 - `station_flags`: station => channels to flag on every feed.
 - `scan_flags`: `(stations, scan)` pairs; one station flags all its baselines
   in the scan, two flag the baseline between them.
+- `time_flags`: station => `[first, last]` windows, in hours measured as
+  `breaks` are, in which all its baselines are flagged.
 - `skip_sources`: sources left out of the track entirely.
 - `apply_only_sources`, `apply_only_scans`: left out of the solve, but
   corrected with the solved bandpass and exported.
@@ -163,6 +165,7 @@ struct TrackConfig{B, Q, P}
     feed_flags::Dict{String, Dict{Int, Vector{Int}}}
     station_flags::Dict{String, Vector{Int}}
     scan_flags::Vector{Tuple{Vector{String}, String}}
+    time_flags::Dict{String, Vector{Tuple{Float64, Float64}}}
     skip_sources::Vector{String}
     apply_only_sources::Vector{String}
     apply_only_scans::Vector{String}
@@ -198,7 +201,7 @@ track_names(c::Campaign) = c.order
 
 const TRACK_KEYS = (
     "label", "data", "antab", "apriori", "output", "corrected", "export_name", "ref_ant", "breaks",
-    "feed_flags", "station_flags", "scan_flags", "skip_sources", "apply_only_sources",
+    "feed_flags", "station_flags", "scan_flags", "time_flags", "skip_sources", "apply_only_sources",
     "apply_only_scans", "scan_delays", "scan_terms", "quantization_efficiency", "priors",
     "watch_stations",
 )
@@ -268,6 +271,7 @@ function _track_config(name, t, root)
         Dict{String, Dict{Int, Vector{Int}}}(String(st) => Dict{Int, Vector{Int}}(parse(Int, string(f)) => Int.(c) for (f, c) in feeds) for (st, feeds) in get(t, "feed_flags", Dict())),
         Dict{String, Vector{Int}}(String(st) => Int.(c) for (st, c) in get(t, "station_flags", Dict())),
         Tuple{Vector{String}, String}[(String.(f["stations"]), String(f["scan"])) for f in get(t, "scan_flags", [])],
+        Dict{String, Vector{Tuple{Float64, Float64}}}(String(st) => [_window(w, "time_flags.$st of track $name") for w in ws] for (st, ws) in get(t, "time_flags", Dict())),
         String.(get(t, "skip_sources", String[])),
         String.(get(t, "apply_only_sources", String[])),
         String.(get(t, "apply_only_scans", String[])),
@@ -277,6 +281,11 @@ function _track_config(name, t, root)
         priors,
         String.(get(t, "watch_stations", String[])),
     )
+end
+
+function _window(w, where)
+    length(w) == 2 && w[1] <= w[2] || error("$where: a window must be [first, last] hours with first <= last, got $w")
+    return (Float64(w[1]), Float64(w[2]))
 end
 
 _breaks(tbl) = Dict{String, Vector{Float64}}(String(st) => sort!(Float64.(hrs)) for (st, hrs) in tbl if !isempty(hrs))
