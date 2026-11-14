@@ -351,9 +351,9 @@ file was made with. Unknown keys and override names are an error, both when the
 campaign file is read and in `python/simulate_antab.py`, which also stops when a
 site in `stations` is missing from the array or the site list.
 
-ngehtsim reads each uvfits file in full before any SEFD is computed, and its
-reader requires the `INTTIM` random parameter, although the SEFDs do not depend
-on the integration time.
+The SEFDs take only the row times, baselines, antenna positions, pointing and
+IF frequencies of each uvfits file, so only its header, random parameters and
+AN and FQ tables are read.
 
 ## Julia interface
 
