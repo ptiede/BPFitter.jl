@@ -43,10 +43,11 @@ end
     scan_delay_model() -> GainModel
 
 A delay per station and scan shared by its feeds, each other feed's offset
-from the first, and a rate per station and scan, for a `FringeClosure` on
-bandpass-corrected data. OU priors along time (10 ns and 0.1 Hz, one hour) let
-a scan with no detection take its value from its neighbors instead of a flag;
-at these widths a scan with detections is set by its own data.
+from the first over the whole track, and a rate per station and scan, for a
+`FringeClosure` on bandpass-corrected data. OU priors along time (10 ns and
+0.1 Hz, one hour) let a scan with no detection take its delay and rate from its
+neighbors instead of a flag; at these widths a scan with detections is set by
+its own data. A change of a feed offset within the track is a bandpass break.
 """
 function scan_delay_model()
     delay = OUPrior(; scale = 3600.0, σ = 1.0e-8)
@@ -54,7 +55,7 @@ function scan_delay_model()
     return GainModel(
         phase = (
             mbd = GainComponent(Delay(); Ti = PerScan(), Feed = SharedFeeds(), prior = delay),
-            rel_delay = GainComponent(Delay(); Ti = PerScan(), Feed = ExceptFeed(1), prior = delay),
+            rel_delay = GainComponent(Delay(); Ti = GlobalTime(), Feed = ExceptFeed(1)),
             rate = GainComponent(Rate(); Ti = PerScan(), Feed = SharedFeeds(), prior = rate),
         ),
     )
