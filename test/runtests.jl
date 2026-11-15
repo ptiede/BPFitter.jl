@@ -350,6 +350,9 @@ end
         # With the break the corrected spectra are flat to the noise; without it they are not.
         χ²(s) = (q = BPFitter.scan_chi2(s.chi2); q.chi2 / q.dof)
         @test 0.8 < χ²(solve_track(track; breaks = r.breaks)) < 1.25
+        # Per-scan terms over channel groups solve beside the bandpass.
+        terms = read_campaign(write_campaign(dir, campaign_body("breaks = { BB = [$h] }\nscan_terms = { BB = [[1, 4], [5, 8]] }")))["T"]
+        @test 0.8 < χ²(solve_track(prepare_track(terms))) < 1.25
         unbroken = solve_track(track; breaks = Dict{String, Vector{Float64}}())
         # The feeds each station was detected on travel with the delay solution.
         info = unbroken.delays.info
