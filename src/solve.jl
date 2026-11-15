@@ -3,15 +3,17 @@
 
 One joint bandpass solve of a track: the model and breaks it was solved under,
 the reference station, the bandpass solution `sol` (with any per-scan terms),
-the per-scan delays (`nothing` without them), the corrected data, and the
-goodness of fit of the scans in the solve ([`track_tss`](@ref)).
+the per-scan delays and the per-integration phases and amplitudes (`adhoc`),
+each `nothing` without them, the corrected data, and the goodness of fit of the
+scans in the solve ([`track_tss`](@ref)).
 """
-struct TrackSolve{M, B, S, D, P, C}
+struct TrackSolve{M, B, S, D, A, P, C}
     model::M
     breaks::B
     ref_ant::String
     sol::S
     delays::D
+    adhoc::A
     corrected::P
     chi2::C
 end
@@ -117,8 +119,10 @@ The joint bandpass solve over every source of `track`:
    the scans in the solve, the gauge pinned to the reference station, and a
    delay per station and scan fitted on the bandpass-corrected data and applied
    to the a-priori data;
-2. the bandpass solved, with the configured per-scan terms;
-3. the solution applied: in full to the scans in the solve, its shape alone
+2. with `adhoc`, a phase and a log-amplitude per station and integration fitted
+   in every scan and applied;
+3. the bandpass solved, with the configured per-scan terms;
+4. the solution applied: in full to the scans in the solve, its shape alone
    (no per-scan terms) to the rest.
 
 `track.ps` is left as it is; the corrected data are a copy.
@@ -128,11 +132,13 @@ function solve_track(track::Track; breaks = track.cfg.breaks)
     delays = track_delays(track, setup)
     keep = in_solve(track.cfg)
     corrected = isnothing(delays) ? deepcopy(track.ps) : calibrate(delays, track.ps)
+    adhoc = track_adhoc(track, corrected)
+    isnothing(adhoc) || calibrate!(adhoc, corrected)
     sol = fit(Bandpass(; setup.model, setup.gauge), filter(keep, corrected))
     calibrate!(sol, filter(keep, corrected))
     rest = filter(!keep, corrected)
     isempty(rest) || calibrate!(shape_only(sol), rest)
-    return TrackSolve(setup.model, breaks, setup.ref_ant, sol, delays, corrected, track_tss(filter(keep, corrected)))
+    return TrackSolve(setup.model, breaks, setup.ref_ant, sol, delays, adhoc, corrected, track_tss(filter(keep, corrected)))
 end
 
 # What a solve with `breaks` fits: the bandpass model with the configured
@@ -160,19 +166,24 @@ function track_delays(track::Track, setup)
     return fit_scan_delays(fit(Bandpass(; model = setup.shape, setup.gauge), filter(in_solve(track.cfg), track.ps)), track.ps)
 end
 
+# The per-integration phases and amplitudes of `ps`, or `nothing` for a track
+# configured without them.
+track_adhoc(track::Track, ps) = track.cfg.adhoc ? fit(Adhoc(), ps) : nothing
+
 """
     save_solve(dir, s::TrackSolve)
 
-The bandpass solution and the per-scan delays as solution stores under `dir`,
-replacing the stores an earlier solve left there.
+The bandpass solution, the per-scan delays and the per-integration phases and
+amplitudes as solution stores under `dir`, replacing the stores an earlier
+solve left there.
 """
 function save_solve(dir, s::TrackSolve)
     mkpath(dir)
-    bandpass, delays = joinpath(dir, "bandpass.zarr"), joinpath(dir, "scan_delays.zarr")
-    rm(bandpass; force = true, recursive = true)
-    rm(delays; force = true, recursive = true)
+    bandpass, delays, adhoc = joinpath(dir, "bandpass.zarr"), joinpath(dir, "scan_delays.zarr"), joinpath(dir, "adhoc.zarr")
+    foreach(p -> rm(p; force = true, recursive = true), (bandpass, delays, adhoc))
     save_solution(bandpass, s.sol)
     isnothing(s.delays) || save_solution(delays, s.delays)
+    isnothing(s.adhoc) || save_solution(adhoc, s.adhoc)
     return dir
 end
 

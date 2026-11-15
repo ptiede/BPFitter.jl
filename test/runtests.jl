@@ -70,7 +70,7 @@ step_dlogamp(c) = 0.1 * step_x(c)^2 - 0.03
 # Four stations near the north pole observing one source at +80°, twelve scans
 # of three integrations, with the bandpass above and noise of `σ` per
 # visibility component (weights 1/σ²). The source is 1 Jy with SEFDs of 1 Jy.
-function write_step_track(dir; σ = 0.05, nscans = 12)
+function write_step_track(dir; σ = 0.05, nscans = 12, jump = 0.0)
     rng = Xoshiro(7)
     starts = T0 .+ 600.0 .* (0:(nscans - 1))
     times = Float64[]
@@ -81,15 +81,16 @@ function write_step_track(dir; σ = 0.05, nscans = 12)
         push!(baselines, (a, b))
         push!(scan_of, k)
     end
-    gain(a, c, k) = exp(
+    integration = repeat(repeat(1:3; inner = 6), nscans)
+    gain(a, c, k, t) = exp(
         complex(
-            step_logamp(a, c) + (a == 2 && k > STEP_AFTER ? step_dlogamp(c) : 0.0),
+            step_logamp(a, c) + (a == 2 && k > STEP_AFTER ? step_dlogamp(c) : 0.0) + (a == 2 && t == 3 ? jump : 0.0),
             step_phase(a, c) + (a == 2 && k > STEP_AFTER ? step_dphase(c) : 0.0),
         )
     )
     nrec = length(times)
     vis = ComplexF32[
-        gain(baselines[r][1], c, scan_of[r]) * conj(gain(baselines[r][2], c, scan_of[r])) + σ * complex(randn(rng), randn(rng))
+        gain(baselines[r][1], c, scan_of[r], integration[r]) * conj(gain(baselines[r][2], c, scan_of[r], integration[r])) + σ * complex(randn(rng), randn(rng))
             for r in 1:nrec, p in 1:2, c in 1:8
     ]
     write_synthetic_uvfits(
@@ -405,6 +406,56 @@ end
         # AP–AZ is detected on both feeds, AZ–JC on feed 1; AP–JC is above the threshold.
         @test d.station == ["AP", "AZ", "JC"] && all(==("X_1"), d.scan)
         @test d.feeds == [1 1; 1 1; 1 0]
+    end
+
+    @testset "adhoc amplitudes on a synthetic track" begin
+        # BB's amplitude rises by a factor of 1.5 on the last integration of every scan.
+        dir = mktempdir()
+        write_step_track(mkpath(joinpath(dir, "data", "T")); jump = log(1.5))
+        write_antab(mkpath(joinpath(dir, "antab")) * "/T.AN", Dict(st => 1.0 for st in STEP_STATIONS); nscans = 12, nif = 8)
+        body(adhoc) = """
+        [defaults]
+        data = "data/{track}"
+        antab = "antab/{track}.AN"
+        output = "out/{track}"
+        corrected = "out/corrected/{track}"
+        ref_ant = "AA"
+        breaks = { BB = [$(track_hours(T0 + 600.0 * STEP_AFTER - 200.0, T0))] }
+        adhoc = $adhoc
+        [tracks.T]
+        """
+        # BB's last-integration amplitude over the mean of its first two, per scan.
+        function jump_ratios(ps)
+            map(collect(values(ps))) do ms
+                V = Gustavo.Fring._coherence_cube(ms[:visibility])
+                bls = findall(p -> "BB" in p, Gustavo.Fring._member_antenna_pairs(ms))
+                a = [sum(abs, V[:, ti, bls, :]) for ti in axes(V, 2)]
+                a[end] / (sum(a[1:(end - 1)]) / (length(a) - 1))
+            end
+        end
+        without = solve_track(prepare_track(read_campaign(write_campaign(dir, body(false)))["T"]))
+        @test isnothing(without.adhoc)
+        @test all(r -> isapprox(r, 1.5; rtol = 0.05), jump_ratios(without.corrected))
+
+        campaign = read_campaign(write_campaign(dir, body(true)))
+        cfg = campaign["T"]
+        @test cfg.adhoc
+        s = solve_track(prepare_track(cfg))
+        @test !isnothing(s.adhoc)
+        @test all(r -> isapprox(r, 1.0; atol = 0.03), jump_ratios(s.corrected))
+
+        redirect_stdout(devnull) do
+            BPFitter.run_command("run", campaign, ["T"])
+        end
+        @test isdir(joinpath(cfg.output, "adhoc.zarr"))
+        exported = joinpath(cfg.corrected, "hops_T_SRC_bpcal.uvfits")
+        ran = jump_ratios(load_uvfits(exported))
+        @test all(r -> isapprox(r, 1.0; atol = 0.03), ran)
+        rm(exported)
+        redirect_stdout(devnull) do
+            BPFitter.run_command("apply", campaign, ["T"])
+        end
+        @test jump_ratios(load_uvfits(exported)) ≈ ran
     end
 
     @testset "dead channels" begin

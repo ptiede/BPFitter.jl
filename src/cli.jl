@@ -21,21 +21,24 @@ Every command runs on the named tracks, or on all the campaign's tracks.
     apply_saved(track) -> TrackSolve
 
 The solve `solve` saved under the track's output folder, applied to the track:
-its per-scan delays, then its bandpass in full to the scans in the solve and
-its shape alone to the rest.
+its per-scan delays and per-integration phases and amplitudes, then its
+bandpass in full to the scans in the solve and its shape alone to the rest.
 """
 function apply_saved(track::Track)
     dir = track.cfg.output
     sol = load_solution(joinpath(dir, "bandpass.zarr"))
     delays_path = joinpath(dir, "scan_delays.zarr")
     delays = isdir(delays_path) ? load_solution(delays_path) : nothing
+    adhoc_path = joinpath(dir, "adhoc.zarr")
+    adhoc = isdir(adhoc_path) ? load_solution(adhoc_path) : nothing
     corrected = isnothing(delays) ? deepcopy(track.ps) : calibrate(delays, track.ps)
+    isnothing(adhoc) || calibrate!(adhoc, corrected)
     keep = in_solve(track.cfg)
     calibrate!(sol, filter(keep, corrected))
     rest = filter(!keep, corrected)
     isempty(rest) || calibrate!(shape_only(sol), rest)
     model = track_bandpass_model(track.cfg.breaks, track.origin, track.cfg.priors)
-    return TrackSolve(model, track.cfg.breaks, something(track.cfg.ref_ant, ""), sol, delays, corrected, track_tss(filter(keep, corrected)))
+    return TrackSolve(model, track.cfg.breaks, something(track.cfg.ref_ant, ""), sol, delays, adhoc, corrected, track_tss(filter(keep, corrected)))
 end
 
 """

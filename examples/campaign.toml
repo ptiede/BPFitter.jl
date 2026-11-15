@@ -10,6 +10,7 @@ corrected = "data/bpcal/{track}"              # corrected uvfits; leave out to w
 export_name = "hops_{track}_{source}_bpcal.uvfits"
 quantization_efficiency = 1.0
 scan_delays = true
+adhoc = false                                 # per-integration phases and amplitudes before the bandpass
 watch_stations = ["S1", "S2"]                 # stations whose baselines get before/after plots
 
 # Channels with no usable signal but sound-looking weights (`bpfit inspect`
