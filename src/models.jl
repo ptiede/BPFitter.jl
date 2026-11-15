@@ -68,12 +68,16 @@ the bandpass of each station `groups` names (station => channel ranges), both
 common to the station's feeds. A phased array whose phase slope restarts at the
 edges of its channel blocks and changes from scan to scan needs these; a delay
 over the whole band cannot follow it.
+
+Each term has an IID prior about zero (1 rad on the level, 10 ns on the delay):
+wide enough that a scan's own data set its values, and it gives the part common
+to every scan to the bandpass, which the data cannot tell apart from it.
 """
 function with_scan_terms(model, groups)
     for (st, chans) in pairs(groups)
         fg = FreqGroups(chans)
-        level = GainComponent(ConstantTerm(); Ti = PerScan(), Frequency = fg, Feed = SharedFeeds())
-        delay = GainComponent(Delay(); Ti = PerScan(), Frequency = fg, Feed = SharedFeeds())
+        level = GainComponent(ConstantTerm(); Ti = PerScan(), Frequency = fg, Feed = SharedFeeds(), prior = IIDPrior(1.0))
+        delay = GainComponent(Delay(); Ti = PerScan(), Frequency = fg, Feed = SharedFeeds(), prior = IIDPrior(1.0e-8))
         tree = antenna_components(model, st)
         model = with_antenna(model, st; phase = merge(tree.phase, (; level, delay)), tree.logamp)
     end
