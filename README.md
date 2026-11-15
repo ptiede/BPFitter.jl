@@ -127,7 +127,8 @@ data/bpcal/track1/                # corrected = "data/bpcal/{track}"
    scan and each feed's delay offset from the first feed per scan, apply them,
    and solve again, with per-scan terms for any station configured with
    `scan_terms`. A delay that jumps from one scan to the next, on one feed or
-   both, needs no flag or break.
+   both, needs no flag or break. The fringe searches cover rates within
+   ±50 mHz, since the input is already fringe-fit.
 4. Apply the solution and report the goodness of fit against the data without
    it.
 
