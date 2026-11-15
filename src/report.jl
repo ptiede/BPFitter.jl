@@ -663,17 +663,15 @@ end
 
 The per-scan terms of a [`scan_delay_model`](@ref) solution against time, one
 row per station: the delay of each feed (the shared delay, plus the feed's
-offset for feeds after the first), each such feed's offset from the first, and
-the rate, colored by source. `rows` are the track's [`scan_rows`](@ref) and
+track offset for feeds after the first), each such feed's offset from the
+first, and the rate, colored by source. `rows` are the track's [`scan_rows`](@ref) and
 `origin` their time origin.
 
 A value is plotted only where the data constrain it, by the detections
 [`scan_detections`](@ref) stored in the solution's `info`: a feed's delay on the
 scans where that feed has a detection, an offset where both feeds do, and the
-rate where the station has any. Elsewhere the fit sets the term from its prior
-alone (for a station with one feed, it splits that feed's delay between the
-shared delay and the offset). A station with no detection in any scan is left
-out.
+rate where the station has any. Elsewhere the fit sets the delay and rate from
+their priors alone. A station with no detection in any scan is left out.
 """
 function plot_scan_delays(delays, rows, origin)
     haskey(delays.info, :detected_station) || error(
@@ -683,10 +681,12 @@ function plot_scan_delays(delays, rows, origin)
     mbd, rel, rate = terms[:mbd], terms[:rel_delay], terms[:rate]
     series(p, a) = vec(parent(p[AntennaName = At(a)]))
     times = collect(lookup(mbd, Ti))
-    for p in (mbd, rel, rate)
+    for p in (mbd, rate)
         length(series(p, first(lookup(p, AntennaName)))) == length(times) ||
             error("expected one value per station and scan; got parameters of size $(size(p))")
     end
+    length(series(rel, first(lookup(rel, AntennaName)))) == 1 ||
+        error("expected one feed offset per station for the track; got parameters of size $(size(rel))")
     hours = track_hours(times, origin)
     scan_row = map(hours) do h
         i = findfirst(r -> r.t0 <= h <= r.t1, rows)
@@ -702,8 +702,8 @@ function plot_scan_delays(delays, rows, origin)
     # Feed 2's delay is the shared delay plus its offset.
     panels = (
         ("feed 1 delay (ps)", (a, i) -> series(mbd, a)[i], (a, i) -> detected(a, i, 1), 1.0e12),
-        ("feed 2 delay (ps)", (a, i) -> series(mbd, a)[i] + series(rel, a)[i], (a, i) -> detected(a, i, 2), 1.0e12),
-        ("feed 2 − feed 1 delay (ps)", (a, i) -> series(rel, a)[i], (a, i) -> detected(a, i, 1) && detected(a, i, 2), 1.0e12),
+        ("feed 2 delay (ps)", (a, i) -> series(mbd, a)[i] + only(series(rel, a)), (a, i) -> detected(a, i, 2), 1.0e12),
+        ("feed 2 − feed 1 delay (ps)", (a, i) -> only(series(rel, a)), (a, i) -> detected(a, i, 1) && detected(a, i, 2), 1.0e12),
         ("rate (mHz)", (a, i) -> series(rate, a)[i], (a, i) -> detected(a, i, 1) || detected(a, i, 2), 1.0e3),
     )
     stations = [String(a) for a in lookup(mbd, AntennaName) if any(i -> detected(a, i, 1) || detected(a, i, 2), eachindex(hours))]
