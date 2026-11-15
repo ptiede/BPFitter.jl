@@ -57,12 +57,18 @@ function reference_antenna(track::Track, breaks)
     return ref
 end
 
+# Fringe-rate search window (Hz). The data are already fringe-fit, so their
+# residual rates are a few mHz; a wider window lets a weak baseline peak on a
+# rate alias, such as a sidelobe of a periodic modulation in one station's data.
+const SCAN_RATE_WINDOW = (-0.05, 0.05)
+
 # The bandpass is applied scan by scan, so only one scan's corrected copy exists
 # at a time. Which feeds of each station the fringe searches detected
 # ([`scan_detections`](@ref)) goes into the solution's `info`, which is saved
 # with it.
 function fit_scan_delays(sol, ps)
-    searches = reduce(vcat, values(mapsets(g -> fit(FringeSearch(), calibrate(sol, g)), groupby(ps, ByScan()))))
+    search = FringeSearch(; rate_window = SCAN_RATE_WINDOW)
+    searches = reduce(vcat, values(mapsets(g -> fit(search, calibrate(sol, g)), groupby(ps, ByScan()))))
     delays = fit(FringeClosure(; model = scan_delay_model()), searches)
     found = scan_detections(searches)
     info = merge(delays.info, (; detected_station = found.station, detected_scan = found.scan, detected_feeds = found.feeds))
