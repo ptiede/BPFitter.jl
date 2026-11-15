@@ -17,7 +17,7 @@ functions and interface. Solutions are saved as zarr files.
 
 ## Install
 
-BPFitter needs Julia 1.12 or later thanks to its *app* functionality. 
+BPFitter needs Julia 1.13 or later thanks to its *app* functionality. 
 
 Install the `bpfit` app with
 ```
@@ -106,7 +106,7 @@ bpfit/track1/                     # output = "bpfit/{track}"
   solution_phase.png  solution_amp.png
   break_delta.txt                                           # with breaks
   scan_delays.png                 # with scan_delays
-  bandpass.zarr  scan_delays.zarr # solutions, read by apply
+  bandpass.zarr  scan_delays.zarr  adhoc.zarr  # solutions, read by apply
   break_suggestions/              # breaks: suggestions.txt and a plot per step
   simulated.AN                    # sefd
   simulated_overrides.toml        # sefd, with ngehtsim overrides
@@ -252,7 +252,7 @@ and 6 for every track.
 | `solution_phase.png`, `solution_amp.png` | the solved bandpass of every station and feed, one trace per interval between breaks |
 | `break_delta.txt` | how much each station's bandpass moves across each break (with breaks): span, delay and its ramp across the band, shape and amplitude scatter per feed |
 | `scan_delays.png` | each station's per-scan delay of each feed, feed 2 − feed 1 delay offset and rate against time, colored by source, on the scans where the feeds involved have fringe detections (with `scan_delays`) |
-| `bandpass.zarr`, `scan_delays.zarr` | the solutions, which `apply` reads and `bpfit plot` redraws `solution_*.png` and `scan_delays.png` from (with the campaign file's breaks) |
+| `bandpass.zarr`, `scan_delays.zarr`, `adhoc.zarr` | the solutions, which `apply` reads (`adhoc.zarr` with `adhoc`) and `bpfit plot` redraws `solution_*.png` and `scan_delays.png` from (with the campaign file's breaks) |
 
 `breaks` writes `break_suggestions/` there, and `sefd` writes `simulated.AN`
 (and `simulated_overrides.toml` when `[sefd]` has overrides).
@@ -284,6 +284,7 @@ Track keys:
 | `skip_sources` | sources left out of the track |
 | `apply_only_sources`, `apply_only_scans` | left out of the solve, but corrected with the solved bandpass and exported |
 | `scan_delays` | fit a delay per station and scan between two bandpass solves (default `true`) |
+| `adhoc` | fit a phase and a log-amplitude per station and integration in each scan (Gustavo's `Adhoc`) on the delay-corrected data, before the bandpass solve (default `false`); each scan's mean log-amplitude, weighted by the information the data carry on each gain, stays with the source, so this removes a station's amplitude change within a scan but not one between scans |
 | `scan_terms` | station => channel groups over which a phase level and a delay are fit per scan beside its bandpass, for a station whose phase slope restarts at fixed channel blocks and changes from scan to scan; the groups cover the band from channel 1, and a one-channel group's channel is best flagged |
 | `quantization_efficiency` | a number, or station => number, for the a-priori amplitude calibration (default 1) |
 | `priors` | `{ bandwidth, phase_sigma, logamp_sigma }`: the centers of the hyperpriors on the bandpass's correlation bandwidth along frequency (Hz) and on the size of its phase (rad) and log-amplitude variations |

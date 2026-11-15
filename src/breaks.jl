@@ -186,16 +186,18 @@ end
     search_data(track, breaks) -> NamedTuple
 
 The data the break search refits with the per-scan delays of a solve with
-`breaks`: the `delays` (`nothing` for a track configured without them), the
-scans in the solve with those delays applied (`delayed`), and their scan
-averages (`averages`). It is the one copy of the track a round of the search
-holds.
+`breaks`: the `delays` and the per-integration phases and amplitudes (`adhoc`),
+each `nothing` for a track configured without them, the scans in the solve
+with both applied (`delayed`), and their scan averages (`averages`). It is the
+one copy of the track a round of the search holds.
 """
 function search_data(track::Track, breaks)
     delays = track_delays(track, solve_setup(track, breaks))
     kept = filter(in_solve(track.cfg), track.ps)
     delayed = isnothing(delays) ? kept : calibrate(delays, kept)
-    return (; delays, delayed, averages = scan_averages(delayed))
+    adhoc = track_adhoc(track, delayed)
+    isnothing(adhoc) || (delayed = calibrate(adhoc, delayed))
+    return (; delays, adhoc, delayed, averages = scan_averages(delayed))
 end
 
 """
@@ -211,7 +213,7 @@ function search_solve(track::Track, breaks, data)
     setup = solve_setup(track, breaks)
     sol = fit(Bandpass(; setup.model, setup.gauge), data.delayed)
     corrected = calibrate(sol, data.averages)
-    return TrackSolve(setup.model, breaks, setup.ref_ant, sol, data.delays, corrected, scan_tss(corrected))
+    return TrackSolve(setup.model, breaks, setup.ref_ant, sol, data.delays, data.adhoc, corrected, scan_tss(corrected))
 end
 
 add_break(breaks, st, h) = merge(breaks, Dict(st => sort!(vcat(get(breaks, st, Float64[]), h))))

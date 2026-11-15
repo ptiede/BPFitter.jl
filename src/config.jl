@@ -145,6 +145,12 @@ Reduction:
   corrected with the solved bandpass and exported.
 - `scan_delays`: fit a delay per station and scan after a first solve and solve
   again on the delay-corrected data.
+- `adhoc`: fit a phase and a log-amplitude per station and integration in each
+  scan (`Gustavo.Adhoc`) on the delay-corrected data and solve the bandpass on
+  the data they correct. Each scan's mean log-amplitude, weighted by the
+  information the data carry on each gain, stays with the source, so a
+  station's amplitude change within a scan is removed and one between scans
+  is not.
 - `scan_terms`: station => channel groups over which the final solve fits a
   phase level and a delay per scan beside its bandpass.
 - `quantization_efficiency`: a number, or station => number, for
@@ -170,6 +176,7 @@ struct TrackConfig{B, Q, P}
     apply_only_sources::Vector{String}
     apply_only_scans::Vector{String}
     scan_delays::Bool
+    adhoc::Bool
     scan_terms::Dict{String, Vector{UnitRange{Int}}}
     quantization_efficiency::Q
     priors::P
@@ -202,7 +209,7 @@ track_names(c::Campaign) = c.order
 const TRACK_KEYS = (
     "label", "data", "antab", "apriori", "output", "corrected", "export_name", "ref_ant", "breaks",
     "feed_flags", "station_flags", "scan_flags", "time_flags", "skip_sources", "apply_only_sources",
-    "apply_only_scans", "scan_delays", "scan_terms", "quantization_efficiency", "priors",
+    "apply_only_scans", "scan_delays", "adhoc", "scan_terms", "quantization_efficiency", "priors",
     "watch_stations",
 )
 const TOP_KEYS = ("defaults", "tracks", "breaks", "sefd")
@@ -276,6 +283,7 @@ function _track_config(name, t, root)
         String.(get(t, "apply_only_sources", String[])),
         String.(get(t, "apply_only_scans", String[])),
         get(t, "scan_delays", true),
+        get(t, "adhoc", false),
         Dict{String, Vector{UnitRange{Int}}}(String(st) => [g[1]:g[2] for g in groups] for (st, groups) in get(t, "scan_terms", Dict())),
         q isa AbstractDict ? Dict(String(k) => v for (k, v) in q) : q,
         priors,
